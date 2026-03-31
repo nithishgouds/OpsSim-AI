@@ -1,0 +1,262 @@
+{
+  "hard_tasks_dataset": [
+    {
+      "scenario_id": "hard_001_ecommerce_black_friday",
+      "domain": "Microservices & API Management",
+      "description": "A massive traffic spike is causing cascading failures across the e-commerce cluster. The system cannot handle the load, and the agent must shed non-critical features to save the checkout process.",
+      "initial_state": {
+        "overall_cpu_load": 180,
+        "services": {
+          "payment_gateway": {"status": "degraded", "cpu_usage": 40},
+          "checkout_cart": {"status": "failing", "cpu_usage": 50},
+          "recommendation_engine": {"status": "online", "cpu_usage": 60},
+          "user_analytics": {"status": "online", "cpu_usage": 30}
+        }
+      },
+      "playbook_text": "SLA PLAYBOOK - RETAIL OPS: 1. Payment processing is our lifeblood; NEVER throttle the payment_gateway. 2. If cluster CPU exceeds 100%, gracefully degrade the user_analytics daemon first. 3. If the checkout_cart fails, you must kill the recommendation_engine entirely to free up compute, then restart the checkout_cart. Revenue > User Experience > Analytics.",
+      "dynamic_bleed_rates": {
+        "payment_gateway_failing": -0.20,
+        "checkout_cart_failing": -0.15,
+        "cpu_over_100": -0.05
+      },
+      "penalties": {
+        "throttled_payment_gateway": -1.0,
+        "restarted_payment_gateway_unnecessarily": -0.5
+      },
+      "optimal_solution_path": [
+        "shutdown(user_analytics)",
+        "shutdown(recommendation_engine)",
+        "restart(checkout_cart)"
+      ]
+    },
+    {
+      "scenario_id": "hard_002_security_data_exfiltration",
+      "domain": "Networking & Security Operations",
+      "description": "An apparent DDoS attack is masking a subtle database exfiltration event. The agent must realize standard traffic shaping isn't enough and make the brutal call to sever the database connection to save PII.",
+      "initial_state": {
+        "edge_router_traffic": "900 Gbps",
+        "waf_status": "overloaded",
+        "internal_db_outbound_connections": 5000,
+        "db_cpu_usage": 95,
+        "public_api_status": "failing"
+      },
+      "playbook_text": "SLA PLAYBOOK - SEC-OPS: 1. Public API uptime is guaranteed at 99.9%. Route traffic through cloud scrubbing if WAF overloads. 2. PII (Personally Identifiable Information) integrity is our absolute highest priority. 3. If you suspect an active database breach or unauthorized bulk export, you must isolate the internal_db by dropping its VPC network interface immediately, even if it causes a total Public API outage. Data loss is legally fatal; API downtime is just a refund.",
+      "dynamic_bleed_rates": {
+        "public_api_failing": -0.05,
+        "db_exfiltration_active": -0.30
+      },
+      "penalties": {
+        "failed_to_isolate_db_within_5_steps": -1.0,
+        "rebooted_db_instead_of_isolating": -0.4
+      },
+      "optimal_solution_path": [
+        "check_logs(internal_db)", 
+        "drop_network_interface(internal_db)",
+        "notify_security_team(severity=critical)"
+      ]
+    },
+    {
+      "scenario_id": "hard_003_cloud_runaway_spend",
+      "domain": "FinOps & Compute Scaling",
+      "description": "A misconfigured auto-scaling group is burning thousands of dollars an hour on GPU instances while core API services are starving for standard compute.",
+      "initial_state": {
+        "hourly_burn_rate": "$12,500",
+        "gpu_nodes_active": 150,
+        "standard_nodes_active": 10,
+        "async_batch_queue": "backed_up",
+        "core_auth_api": "throttling"
+      },
+      "playbook_text": "SLA PLAYBOOK - FIN-OPS: 1. Hard cap on AWS hourly spend is $2,000/hr. Any runaway scaling must be terminated immediately. 2. The core_auth_api must remain responsive; provision standard nodes if it throttles. 3. The async_batch_queue (used for ML training) has a 24-hour SLA. If budget is constrained, freeze the batch queue and terminate all GPU nodes EXCEPT those tagged 'production_inference'.",
+      "dynamic_bleed_rates": {
+        "budget_exceeded": -0.15,
+        "core_auth_api_throttling": -0.10
+      },
+      "penalties": {
+        "terminated_production_inference_gpus": -0.8,
+        "failed_to_stop_budget_bleed": -1.0
+      },
+      "optimal_solution_path": [
+        "freeze_queue(async_batch_queue)",
+        "terminate_instances(type=gpu, exclude_tag=production_inference)",
+        "scale_up(core_auth_api, nodes=5)"
+      ]
+    },
+    {
+      "scenario_id": "hard_004_split_brain_database",
+      "domain": "Data Engineering & Compliance",
+      "description": "A transatlantic network partition has caused the US and EU databases to go out of sync. Both are accepting writes, creating a massive data corruption nightmare.",
+      "initial_state": {
+        "network_link_us_eu": "severed",
+        "db_us_east_status": "accepting_writes",
+        "db_eu_west_status": "accepting_writes",
+        "replication_lag": "infinite",
+        "us_revenue_per_min": "$50,000",
+        "eu_revenue_per_min": "$10,000"
+      },
+      "playbook_text": "SLA PLAYBOOK - DATA GOVERNANCE: 1. Avoid split-brain scenarios at all costs. If cross-region replication fails, one database MUST be set to read-only. 2. US-East generates 5x more revenue than EU-West. 3. LEGAL OVERRIDE: Due to GDPR compliance, EU user data must never be subjected to manual reconciliation or loss. In the event of a total transatlantic partition, EU-West must remain the primary write-master to protect privacy laws, and US-East must be immediately locked to read-only, sacrificing US revenue until the link is restored.",
+      "dynamic_bleed_rates": {
+        "split_brain_active": -0.25,
+        "us_east_offline": -0.05
+      },
+      "penalties": {
+        "set_eu_west_to_read_only": -1.0,
+        "allowed_split_brain_for_more_than_3_steps": -0.8
+      },
+      "optimal_solution_path": [
+        "check_replication_status()",
+        "set_db_mode(db_us_east, mode=read_only)",
+        "page_network_engineers()"
+      ]
+    },
+    {
+      "scenario_id": "hard_005_kubernetes_oom_death_spiral",
+      "domain": "Container Orchestration",
+      "description": "A memory leak in a newly deployed application is consuming all node memory, causing the Kubernetes scheduler to OOMKill critical system pods like the Ingress controller.",
+      "initial_state": {
+        "node_memory_usage": "99%",
+        "ingress_controller_status": "CrashLoopBackOff",
+        "leaky_app_pod_status": "Running",
+        "system_logging_daemon": "Running",
+        "external_traffic": "Dropped"
+      },
+      "playbook_text": "SLA PLAYBOOK - KUBERNETES OPS: 1. External traffic routing (Ingress) must be restored within 2 minutes. 2. Never manually evict the system_logging_daemon; it breaks compliance auditing. 3. If a node is caught in an OOM death spiral caused by a user application, do NOT just restart the Ingress. You must cordon the node to prevent new schedules, forcefully delete the leaky application deployment, and only then restart the Ingress pod.",
+      "dynamic_bleed_rates": {
+        "external_traffic_dropped": -0.20,
+        "node_memory_critical": -0.05
+      },
+      "penalties": {
+        "evicted_logging_daemon": -1.0,
+        "restarted_ingress_before_fixing_memory": -0.5
+      },
+      "optimal_solution_path": [
+        "cordon_node(node_1)",
+        "delete_deployment(leaky_app)",
+        "restart_pod(ingress_controller)"
+      ]
+    },
+    {
+      "scenario_id": "hard_006_ransomware_vs_uptime",
+      "domain": "Storage & Backup Operations",
+      "description": "High I/O alerts reveal that files on a shared network drive are being rapidly renamed with a .locked extension. The drive is currently serving assets for the primary web application.",
+      "initial_state": {
+        "shared_drive_io": "Maxed",
+        "encrypted_file_count": 450,
+        "web_app_status": "Healthy",
+        "backup_server_status": "Online"
+      },
+      "playbook_text": "SLA PLAYBOOK - STORAGE SEC: 1. Web Application uptime targets are 99.99%. 2. In the event of confirmed ransomware behavior (rapid sequential encryption), standard uptime SLAs are VOID. 3. You must immediately unmount the affected shared drive to sever the encryption process, even though this will instantly crash the web application. DO NOT attempt to run antivirus while the drive is mounted, as the encryption is faster.",
+      "dynamic_bleed_rates": {
+        "encryption_actively_spreading": -0.30,
+        "web_app_down": -0.02
+      },
+      "penalties": {
+        "ran_antivirus_without_unmounting": -0.6,
+        "failed_to_unmount_within_3_steps": -1.0
+      },
+      "optimal_solution_path": [
+        "check_file_extensions(shared_drive)",
+        "force_unmount(shared_drive)",
+        "trigger_incident_response()"
+      ]
+    },
+    {
+      "scenario_id": "hard_007_poisoned_cicd_pipeline",
+      "domain": "Release Engineering & CI/CD",
+      "description": "An automated pipeline is deploying a new release. Midway through, a security scanner flags a critical zero-day vulnerability in a pulled dependency. Halting the pipeline will leave the database schema in a corrupted half-migrated state.",
+      "initial_state": {
+        "pipeline_status": "Running (Step 4/5)",
+        "db_migration_status": "In Progress (Irreversible)",
+        "security_scanner_alert": "CRITICAL: CVE-2026-9999 detected in build artifact",
+        "production_app_version": "v1.0.0"
+      },
+      "playbook_text": "SLA PLAYBOOK - RELEASE OPS: 1. Never deploy artifacts with known critical CVEs to production. 2. Database migrations are irreversible once started; stopping a pipeline mid-migration will permanently lock the production tables. 3. If a toxic build is deploying alongside a DB migration, you must allow the DB migration to finish, explicitly cancel the artifact deployment step, and rollback the app image to the previous version while maintaining the new DB schema.",
+      "dynamic_bleed_rates": {
+        "toxic_artifact_deploying": -0.25,
+        "db_locked": -0.15
+      },
+      "penalties": {
+        "aborted_pipeline_violently": -1.0,
+        "allowed_cve_deployment": -1.0
+      },
+      "optimal_solution_path": [
+        "wait_for_step(db_migration_complete)",
+        "cancel_step(deploy_artifact)",
+        "rollback_image(production_app, version=v1.0.0)"
+      ]
+    },
+    {
+      "scenario_id": "hard_008_compromised_c_suite_iam",
+      "domain": "Identity & Access Management",
+      "description": "The CEO's account is making highly unusual bulk export requests against the customer billing API at 3:00 AM from a foreign IP. The CEO is scheduled to present live to the board in 10 minutes.",
+      "initial_state": {
+        "user_account": "ceo@company.com",
+        "location": "Anomalous (Non-US)",
+        "activity": "Bulk export of billing_records",
+        "board_meeting_status": "Starting in 10 mins"
+      },
+      "playbook_text": "SLA PLAYBOOK - ZERO TRUST: 1. C-Suite accounts are exempt from automated lockouts to prevent meeting disruptions. Manual lockouts require approval from the CISO. 2. EXCEPTION: Any anomalous bulk activity targeting the 'billing_records' API is considered a Tier 1 existential threat. In this specific case, you must immediately revoke the active session tokens and temporarily downgrade the account privileges to 'Read-Only', bypassing the CISO approval requirement.",
+      "dynamic_bleed_rates": {
+        "data_export_in_progress": -0.40
+      },
+      "penalties": {
+        "requested_ciso_approval_while_data_leaked": -0.8,
+        "fully_locked_account_preventing_login": -0.5
+      },
+      "optimal_solution_path": [
+        "revoke_active_sessions(ceo@company.com)",
+        "modify_role(ceo@company.com, role=read_only)",
+        "alert_security_operations()"
+      ]
+    },
+    {
+      "scenario_id": "hard_009_blind_failover_telemetry_outage",
+      "domain": "Observability & Incident Response",
+      "description": "Customer support is flooded with reports of a total platform outage. However, the observability cluster (Prometheus/Grafana) has crashed, leaving the team completely blind to system metrics.",
+      "initial_state": {
+        "customer_tickets_per_min": 500,
+        "observability_cluster": "Offline",
+        "primary_region_api": "Unknown (Presumed Dead)",
+        "secondary_region_api": "Unknown (Presumed Healthy)"
+      },
+      "playbook_text": "SLA PLAYBOOK - INCIDENT RESPONSE: 1. Never execute a database failover or blind reboot on the Primary API without verifying metrics, as this can cause data corruption. 2. If the Observability cluster dies during a suspected major outage, do not waste time fixing dashboards while users are impacted. 3. Immediately reroute DNS traffic to the Secondary Region (Active-Passive failover), and ONLY THEN allocate resources to restart the Observability cluster.",
+      "dynamic_bleed_rates": {
+        "customer_outage_active": -0.20,
+        "observability_down": -0.01
+      },
+      "penalties": {
+        "restarted_primary_api_blindly": -1.0,
+        "troubleshot_grafana_before_failover": -0.6
+      },
+      "optimal_solution_path": [
+        "update_dns_routing(target=secondary_region)",
+        "restart_cluster(observability)",
+        "verify_traffic_flow()"
+      ]
+    },
+    {
+      "scenario_id": "hard_010_serverless_concurrency_storm",
+      "domain": "Serverless & Event-Driven Architecture",
+      "description": "A legacy on-premise database is running slow. This causes AWS Lambda functions to take longer to execute, rapidly exhausting the account's concurrency limits and dropping all incoming webhook events.",
+      "initial_state": {
+        "lambda_concurrency": "1000/1000 (Maxed)",
+        "webhook_events": "Dropping 50/sec",
+        "legacy_db_cpu": "98%",
+        "sqs_dead_letter_queue": "Empty"
+      },
+      "playbook_text": "SLA PLAYBOOK - SERVERLESS OPS: 1. Dropping webhook events from third-party partners violates our SLA. 2. When Lambda functions hit concurrency limits, the default reaction is to request a quota increase. 3. DO NOT increase concurrency if the bottleneck is a legacy backend service (like the legacy_db); more concurrent Lambdas will just DDoS the database until it crashes completely. Instead, throttle the Lambda concurrency to 100 to save the DB, and configure the API Gateway to route dropped events to the SQS Dead Letter Queue.",
+      "dynamic_bleed_rates": {
+        "events_dropped_permanently": -0.25,
+        "legacy_db_overloaded": -0.10
+      },
+      "penalties": {
+        "increased_lambda_concurrency": -1.0,
+        "allowed_db_to_crash": -0.8
+      },
+      "optimal_solution_path": [
+        "route_overflow_to_dlq(sqs_dead_letter_queue)",
+        "set_lambda_concurrency_limit(function_name, limit=100)",
+        "monitor_legacy_db_recovery()"
+      ]
+    }
+  ]
+}
