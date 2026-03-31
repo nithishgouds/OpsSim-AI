@@ -1,171 +1,96 @@
 """
-Functions Used
+DevOpsEnv
 
+Implements a multi-task OpenEnv-compatible environment with 3 tasks:
+- EASY: Fix configuration from natural language
+- MEDIUM: Detect hidden bug from complaints
+- HARD: Policy-based system stabilization
 
-_is_correct_action() - Checks if picked action in step is true action
-
-_llm_parse() - IMPORTANT. Need to add LLM inference here. For now, a basic simulation is added
-
-_degrade_system() - If wrong action picked, penalise system
-
-_generate_logs() - IMPORTANT. Generate example logs.
-
-_generate_messages() - IMPORTANT. Generate messages from user.
-
-
+Key Methods:
+- reset() → initializes environment per task
+- step(action) → applies action, uses LLM hint, computes reward
+- state() → returns internal state
 """
 
 import random
 from models import Observation, Action, Reward
+from llm_parser import LLMParser
+
 
 class DevOpsEnv:
-    def __init__(self, seed = 42):
-        self.rng = random.Random(seed) # deterministic. For reproducibilty
-        self.max_steps = 5 # Max steps in episode
-        self.reset() # reset environment
+    def __init__(self, seed=42, max_steps = 5, task_type = "easy"):
+        self.rng = random.Random(seed)  # deterministic randomness
+        self.llm = LLMParser()          # LLM interface
+        self.max_steps = max_steps      # max steps per episode
+        self.task_type = task_type      # pick task
+        self.reset()                    # initialize env
 
+    # ================= RESET =================
     def reset(self) -> Observation:
-        self.true_error = self.rng.choice([
-            "db_timeout",
-            "cpu_overload",
-            "bad_deploy"
-        ])  # select a random error from available errors. This is actual error
+        self.step_count = 0  # reset step counter
 
-        self.step_count = 0
-        self.resolved = False  # reset back to start
-        self.priority_assigned = None
+        if self.task_type == "easy":
+            return self._reset_easy()
 
-        self.logs = self._generate_logs(self.true_error)
-        self.user_messages = self._generate_messages(self.true_error)
-        hint, confidence = self._llm_parse(self.logs, self.user_messages)
+        elif self.task_type == "medium":
+            return self._reset_medium()
 
-        self.observation = Observation(
-            logs = self.logs,
-            user_messages = self.user_messages,
-
-            error_type_hint = hint, 
-            confidence = confidence,
-
-            latency_level=self.rng.uniform(0.5, 0.9),  # high latency
-            error_rate=self.rng.uniform(0.4, 0.8),     # moderate errors
-            cpu_usage=self.rng.uniform(0.3, 0.9),      # varied CPU
-
-            recent_deploy=(self.true_error == "bad_deploy"),  # only true for deploy issue
-
-            user_impact=self.rng.uniform(0.4, 0.9),  # user complaints
-
-            step_count=0
-        )
-
-        return self.observation
-    
-    def step(self, action:Action):
-        reward = 0.0
-        done = False
-        
-        self.step_count += 1
-
-        # Based on Action, do this
-        if action.action_type == "assign_high_priority":
-            self.priority_assigned = "high"
-
-        elif action.action_type == "assign_low_priority":
-            self.priority_assigned = "low"
-
-        elif action.action_type in ["restart_db", "scale_up_service", "rollback_deploy"]:
-            
-            #Correct action
-            if self._is_correct_action(action.action_type):
-                reward += 2
-                self.resolved = True
-                done = True
-            #Incorrect Action
-            else:
-                reward -= 1
-                self._degrade_system()
-
-        #For now, investigate just increases confidence in LLM's result
-        elif action.action_type == "investigate":
-            reward -= 0.5
-            hint, confidence = self._llm_parse(
-                self.logs, self.user_messages, improve = True
-            )
-            self.observation.error_type_hint = hint
-            self.observation.confidence = confidence
-        
-        reward -= 0.5 # Step penalty
-
-        if self.step_count >= self.max_steps:
-            done = True
-            if not self.resolved:
-                reward -= 3 # no solve = high negative reward
-        
-        self.observation.step_count = self.step_count
-
-        return self.observation, Reward(value = reward), done, {}
-
-    def state(self): # Keeps track of current state
-        return {
-            "true_error": self.true_error, # INTERNAL, true error
-            "resolved": self.resolved, # is resolved??
-            "step_count": self.step_count # How many steps
-        }
-
-    def _is_correct_action(self, action):
-        mapping = {
-            "db_timeout" : "restart_db",
-            "cpu_overload": "scale_up_service",
-            "bad_deploy": "rollback_deploy"
-        }
-
-        return mapping[self.true_error] == action
-    
-    def _llm_parse(self, logs, messages, improve = False):
-        # !!!!!!! IMPORTANT !!!!!!!
-        # Should add LLM Inference here. For now, just a basic simulation
-        accuracy = 0.6
-        if improve:
-            accurace = 0.85
-        if self.rng.random() < accuracy:
-            hint = self.true_error
         else:
-            hint = self.rng.choice([
-                "db_timeout",
-                "cpu_overload",
-                "bad_deploy",
-                "unknown"
-            ])
+            return self._reset_hard()
+
+    # -------- EASY --------
+    def _reset_easy(self):
+        return None
+
+    # -------- MEDIUM --------
+    def _reset_medium(self):
+        return None
+
+    # -------- HARD --------
+    def _reset_hard(self):
+        return None
+
+    # ================= STEP =================
+    def step(self, action: Action):
+        self.step_count += 1  # increment step count
+
         
-        confidence = self.rng.uniform(0.3,0.8)
-        if improve:
-            confidence += 0.2
 
-        return hint,min(confidence,1.0)
+        if self.task_type == "easy":
+            # LLM is called HERE
+            llm_action, confidence, llm_target = self.llm.parse(self.observation)
+            obs, reward, done, info = self._step_easy(action, llm_action, confidence)
 
-    def _degrade_system(self):
-        self.observation.latency_level = min(1.0, self.observation.latency_level + 0.1)
-        self.observation.user_impact = min(1.0, self.observation.user_impact + 0.1)
-    
-    def _generate_logs(self, error):
-        if error == "db_timeout":
-            return "ERROR: connection timeout at db-service"
+        elif self.task_type == "medium":
+            # LLM is called HERE
+            llm_action, confidence, llm_target = self.llm.parse(self.observation)
+            obs, reward, done, info = self._step_medium(action, llm_action, confidence)
 
-        if error == "cpu_overload":
-            return "WARNING: CPU usage exceeded 95 percent on service"
+        else:
+            # LLM is called HERE
+            llm_action, confidence, llm_target = self.llm.parse(self.observation)
+            obs, reward, done, info = self._step_hard(action, llm_action, confidence, llm_target)
 
-        if error == "bad_deploy":
-            return "ERROR: service crash after deployment"
+        obs.step_count = self.step_count  # update step count in observation
 
-        return "No logs"
+        return obs, reward, done, info
 
-    def _generate_messages(self, error):
-        if error == "db_timeout":
-            return "Users report payment failures and timeouts"
+    # ================= EASY STEP =================
+    def _step_easy(self, action, llm_action, confidence):
+        return None
 
-        if error == "cpu_overload":
-            return "App is very slow"
+    # ================= MEDIUM STEP =================
+    def _step_medium(self, action, llm_action, confidence):
+        return None
 
-        if error == "bad_deploy":
-            return "App broke after update"
+    # ================= HARD STEP =================
+    def _step_hard(self, action, llm_action, confidence, llm_target):
+        return None
 
-        return "No complaints"
+    # ================= STATE =================
+    def state(self):
+        return {
+            "task_type": self.task_type,
+            "state": self.state_data,
+            "step_count": self.step_count
+        }
