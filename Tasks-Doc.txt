@@ -1,0 +1,272 @@
+EASY TASK — Natural Language to Configuration Fix
+
+Problem Definition:
+The environment simulates a scenario where a developer has unintentionally misconfigured a system. The only primary signal is a natural language message written in an unstructured, possibly vague and panicked style. Logs may provide additional hints, but the core task is to interpret human intent. The agent must identify which configuration parameter is incorrect and apply the correct fix.
+
+Observation Structure:
+Observation:
+    user_message: str
+    logs: str
+    config: dict
+    available_actions: list[str]
+    step_count: int
+
+Example Observation:
+{
+  "user_message": "I think I broke payments after my last update, users are complaining!",
+  "logs": "[ERROR] payment_service disabled",
+  "config": {
+    "payment_enabled": false,
+    "email_notifications": true
+  },
+  "available_actions": [
+    "enable_payment",
+    "disable_payment",
+    "restart_service",
+    "do_nothing"
+  ],
+  "step_count": 0
+}
+
+Internal State:
+state = {
+    "config": {
+        "payment_enabled": False,
+        "email_notifications": True
+    },
+    "issue_resolved": False,
+    "step_count": 0
+}
+
+Action Space:
+Action:
+    action_type ∈ {
+        "enable_payment",
+        "disable_payment",
+        "restart_service",
+        "do_nothing"
+    }
+
+State Transition Logic:
+if action == "enable_payment":
+    state["config"]["payment_enabled"] = True
+
+elif action == "disable_payment":
+    state["config"]["payment_enabled"] = False
+
+elif action == "restart_service":
+    pass
+
+elif action == "do_nothing":
+    pass
+
+Reward Function:
+reward = -0.05
+
+if action == message_based_action:
+    reward += 0.3
+
+if action == correct_action:
+    reward += 1.0
+    done = True
+
+else:
+    done = False
+
+Termination Condition:
+done = (state["config"]["payment_enabled"] == True)
+
+Task Objective:
+The agent must interpret natural language, identify the faulty configuration parameter, and correct it efficiently.
+
+-----------------------------------------------------------------------
+
+MEDIUM TASK — Complaints to Hidden Bug Detection
+
+Problem Definition:
+The system appears fully operational according to system metrics such as CPU, memory, and error rates. However, users are reporting issues through unstructured complaints. These complaints reveal patterns that are not captured by monitoring systems. The agent must analyze these complaints, detect hidden patterns, infer the affected system component, and fix a business logic bug that is not directly observable in logs.
+
+Observation Structure:
+Observation:
+    user_messages: list[str]
+    logs: str
+    system_metrics: dict
+    step_count: int
+
+Example Observation:
+{
+  "user_messages": [
+    "Payments fail on Saturday",
+    "Weekend checkout broken"
+  ],
+  "logs": "[INFO] system operational",
+  "system_metrics": {
+    "cpu": 0.3,
+    "error_rate": 0.0
+  },
+  "step_count": 0
+}
+
+Internal State:
+state = {
+    "bug_active": True,
+    "bug_type": "weekend_logic_error",
+    "service": "payment",
+    "step_count": 0
+}
+
+Action Space:
+Action:
+    action_type ∈ {
+        "inspect_logs",
+        "analyze_complaints",
+        "identify_service",
+        "fix_weekend_bug",
+        "restart_service",
+        "do_nothing"
+    }
+
+State Transition Logic:
+if action == "fix_weekend_bug":
+    state["bug_active"] = False
+
+elif action == "restart_service":
+    pass
+
+elif action == "analyze_complaints":
+    pass
+
+elif action == "identify_service":
+    pass
+
+Reward Function:
+reward = -0.05
+
+if action == "analyze_complaints":
+    reward += 0.3
+
+if action == "identify_service":
+    reward += 0.3
+
+if action == "fix_weekend_bug":
+    reward += 1.0
+    done = True
+
+else:
+    done = False
+
+Termination Condition:
+done = (state["bug_active"] == False)
+
+Task Objective:
+The agent must detect patterns from user complaints, infer hidden system behavior, identify the root cause, and fix the bug.
+
+-----------------------------------------------------------------------
+
+HARD TASK — Policy-Based System Trade-Off Decision
+
+Problem Definition:
+The system is in a critical overloaded state where not all services can be preserved. The agent must make strategic decisions based on business policy (playbook). These policies define priorities such as which services must never be stopped and which can be sacrificed. The goal is not just technical correctness but alignment with business objectives under constraints.
+
+Observation Structure:
+Observation:
+    system_state: dict
+    alerts: list[str]
+    logs: str
+    playbook_text: str
+    step_count: int
+
+Example Observation:
+{
+  "system_state": {
+    "payment": "degraded",
+    "analytics": "running",
+    "recommendation": "running",
+    "cpu": 1.8
+  },
+  "alerts": [
+    "CPU overload",
+    "checkout latency high"
+  ],
+  "playbook_text": "Never stop payments. Analytics is lowest priority.",
+  "step_count": 0
+}
+
+Internal State:
+state = {
+    "services": {
+        "payment": "degraded",
+        "analytics": "running",
+        "recommendation": "running"
+    },
+    "cpu": 1.8,
+    "stable": False
+}
+
+Action Space:
+Action:
+    action_type ∈ {
+        "shutdown_service",
+        "throttle_service",
+        "restart_service",
+        "scale_service",
+        "do_nothing"
+    }
+    target: optional[str]
+
+State Transition Logic:
+if action.action_type == "shutdown_service":
+    state["services"][action.target] = "stopped"
+    state["cpu"] -= 0.3
+
+elif action.action_type == "throttle_service":
+    state["cpu"] -= 0.2
+
+elif action.action_type == "scale_service":
+    state["cpu"] -= 0.4
+
+if state["cpu"] < 1.0:
+    state["stable"] = True
+
+Reward Function:
+reward = -0.05
+
+if action.target == "analytics":
+    reward += 0.3
+
+if "payment" not stopped:
+    reward += 0.5
+
+if state["stable"]:
+    reward += 1.0
+    done = True
+
+if action violates playbook:
+    reward -= 0.7
+
+Termination Condition:
+done = (state["stable"] == True)
+
+Task Objective:
+The agent must interpret policy rules, prioritize services correctly, make trade-offs, and stabilize the system.
+
+-----------------------------------------------------------------------
+
+GLOBAL FLOW (COMMON TO ALL TASKS):
+
+reset()
+    → returns Observation
+
+Agent (LLM) reads Observation
+
+Agent outputs Action
+
+step(Action)
+    → updates state
+    → computes reward
+    → returns (Observation, Reward, Done)
+
+Loop continues until done == True
+
+FINAL OUTPUT:
+Each task produces a final score between 0.0 and 1.0 based on accumulated reward.
