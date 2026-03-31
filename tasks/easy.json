@@ -1,0 +1,82 @@
+[
+    {
+      "task_level": "easy",
+      "message": "Users can't access profiles after my recent UI tweak!",
+      "logs": [
+        "[INFO] profile request received",
+        "[ERROR] profile service not responding",
+        "[DEBUG] retry failed"
+      ],
+      "config": {
+        "profile_enabled": true,
+        "profile_service_status": "down"
+      },
+      "correct_action": "restart_profile_service",
+      "message_based_action": "fix_profile_ui",
+      "log_based_action": "restart_profile_service"
+    },
+    {
+      "task_level": "easy",
+      "message": "I think I accidentally disabled notifications in config!",
+      "logs": [
+        "[INFO] notification trigger received",
+        "[DEBUG] notification skipped due to config",
+        "[INFO] no errors detected"
+      ],
+      "config": {
+        "notifications_enabled": false,
+        "notification_service_status": "running"
+      },
+      "correct_action": "enable_notifications",
+      "message_based_action": "enable_notifications",
+      "log_based_action": "restart_notification_service"
+    },
+    {
+      "task_level": "easy",
+      "message": "Payments failing after I updated retry logic!",
+      "logs": [
+        "[INFO] payment request received",
+        "[ERROR] cache service unavailable",
+        "[DEBUG] fallback failed"
+      ],
+      "config": {
+        "payment_service": "running",
+        "cache_service_status": "down"
+      },
+      "correct_action": "restart_cache_service",
+      "message_based_action": "update_retry_logic",
+      "log_based_action": "restart_cache_service"
+    },
+    {
+      "task_level": "easy",
+      "message": "System is slow after my query optimization changes!",
+      "logs": [
+        "[INFO] request received",
+        "[ERROR] database connection timeout",
+        "[DEBUG] connection pool exhausted"
+      ],
+      "config": {
+        "database_status": "overloaded",
+        "query_optimization": "enabled"
+      },
+      "correct_action": "restart_database",
+      "message_based_action": "disable_query_optimization",
+      "log_based_action": "restart_database"
+    },
+    {
+      "task_level": "easy",
+      "message": "File uploads failing after I changed storage config!",
+      "logs": [
+        "[INFO] upload request received",
+        "[ERROR] storage service connection refused",
+        "[DEBUG] network unreachable"
+      ],
+      "config": {
+        "upload_enabled": true,
+        "storage_service_status": "unreachable"
+      },
+      "correct_action": "restart_storage_service",
+      "message_based_action": "enable_upload",
+      "log_based_action": "restart_storage_service"
+    }
+  ]
