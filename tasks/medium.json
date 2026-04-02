@@ -1,0 +1,120 @@
+{
+  "medium_tasks_dataset": [
+    {
+      "scenario_id": "medium_dyn_002_partial_payment_outage",
+      "domain": "Payment Systems",
+      "description": "Users report intermittent payment failures. System metrics look normal, but certain transactions are silently failing. The agent must diagnose and fix the issue in a few steps while avoiding actions that worsen the system.",
+
+      "initial_state": {
+        "bug_active": true,
+        "service_health": 0.5,
+        "pattern_identified": false,
+        "root_cause_identified": false,
+        "fix_applied": false
+      },
+
+      "observation": {
+        "user_messages": [
+          "Some payments are failing randomly",
+          "Checkout works sometimes but not always",
+          "This is inconsistent and frustrating"
+        ],
+        "logs": "[INFO] Payment service running\n[INFO] No critical errors detected\n[DEBUG] Transaction success rate: 78%\n[INFO] CPU=35%, error_rate=0.0",
+        "system_metrics": {
+          "cpu": 0.35,
+          "error_rate": 0.0
+        }
+      },
+
+      "action_space": [
+        "analyze_failure_pattern",
+        "inspect_transaction_logs",
+        "identify_edge_case_condition",
+        "apply_transaction_fix",
+        "restart_payment_service",
+        "do_nothing"
+      ],
+
+        "dynamic_rewards": {
+            "pattern_identified": 0.25,
+            "root_cause_identified": 0.4,
+            "bug_fixed": 1.2
+            },
+
+        "dynamic_penalties": {
+            "irrelevant_action": -0.15,
+            "restart_without_diagnosis": -0.4,
+            "random_fix_attempt": -0.3,
+            "repeat_action": -0.2,
+            "no_progress": -0.15
+            },
+
+      "state_transitions": {
+        "analyze_failure_pattern": {
+          "pattern_identified": true,
+          "service_health_delta": 0.1
+        },
+        "inspect_transaction_logs": {
+          "root_cause_identified": false,
+          "service_health_delta": 0.05
+        },
+        "identify_edge_case_condition": {
+          "root_cause_identified": true,
+          "service_health_delta": 0.15
+        },
+        "apply_transaction_fix": {
+          "bug_active": false,
+          "fix_applied": true,
+          "service_health_delta": 0.3
+        },
+
+        "restart_payment_service": {
+          "service_health_delta": -0.2
+        },
+        "do_nothing": {
+          "service_health_delta": -0.1
+        }
+      },
+
+      "log_templates": {
+        "analyze_failure_pattern": "[DEBUG] Failure pattern detected: transactions failing when amount > threshold\n[INFO] Pattern correlation identified",
+
+        "inspect_transaction_logs": "[TRACE] Inspecting transaction logs\n[WARNING] Some transactions missing validation checks",
+
+        "identify_edge_case_condition": "[ERROR] Root cause found: edge-case condition skips validation for certain transactions\n[INFO] Bug confirmed in transaction handler",
+
+        "apply_transaction_fix": "[INFO] Patch applied to transaction handler\n[DEBUG] Validation enforced for all cases\n[INFO] Transaction success rate improving",
+
+        "restart_payment_service": "[INFO] Restarting payment service...\n[WARNING] Issue persists after restart\n[ERROR] Transaction failures continue",
+
+        "do_nothing": "[WARNING] No action taken\n[ERROR] Transaction failures increasing",
+
+        "degradation": "[ERROR] System stability degrading\n[DEBUG] Transaction success rate dropping",
+
+        "improvement": "[INFO] System stability improving\n[DEBUG] Transaction success rate increasing"
+      },
+
+      "user_message_updates": {
+        "improve": [
+          "Seems slightly better now",
+          "Fewer failures, but still not perfect"
+        ],
+        "degrade": [
+          "This is getting worse",
+          "Now almost all payments are failing",
+          "System is unreliable"
+        ],
+        "fixed": [
+          "Payments working perfectly now",
+          "Issue resolved, everything is smooth"
+        ]
+      },
+
+      "optimal_solution_path": [
+        "analyze_failure_pattern",
+        "identify_edge_case_condition",
+        "apply_transaction_fix"
+      ]
+    }
+  ]
+}
