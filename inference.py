@@ -1,258 +1,198 @@
-
-
-"""
-Inference Script Example
-===================================
-MANDATORY
-- Before submitting, ensure the following variables are defined in your environment configuration:
-    API_BASE_URL   The API endpoint for the LLM.
-    MODEL_NAME     The model identifier to use for inference.
-    HF_TOKEN       Your Hugging Face / API key.
-    
-- The inference script must be named `inference.py` and placed in the root directory of the project
-- Participants must use OpenAI Client for all LLM calls using above variables
-"""
-
 import os
-import re
-import base64
-import textwrap
-from io import BytesIO
-from typing import List, Optional, Dict
-
+import json
+from dotenv import load_dotenv
 from openai import OpenAI
-import numpy as np
-from PIL import Image
+from env import DevOpsEnv
+from models import Action
 
-from browsergym_env import BrowserGymAction, BrowserGymEnv
+load_dotenv()
 
-API_BASE_URL = os.getenv("API_BASE_URL") // "https://router.huggingface.co/v1"
+API_BASE_URL = os.getenv("API_BASE_URL")
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME")
-MAX_STEPS = 8
-MAX_DOM_CHARS = 3500
-TEMPERATURE = 0.2
-MAX_TOKENS = 200
-FALLBACK_ACTION = "noop()"
 
-DEBUG = True
-ACTION_PREFIX_RE = re.compile(
-    r"^(action|next action)\s*[:\-]\s*",
-    re.IGNORECASE,
-)
-ACTION_PATTERN = re.compile(r"[A-Za-z_]+\s*\(.*\)", re.DOTALL)
+client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
+class LLMParser:
+    def __init__(self):
+        self.client = client
+        self.model = MODEL_NAME
+        self.cache = {}
 
-SYSTEM_PROMPT = textwrap.dedent(
-    """
-    You control a web browser through BrowserGym.
-    Reply with exactly one action string.
-    The action must be a valid BrowserGym command such as:
-    - noop()
-    - click('<BID>')
-    - type('selector', 'text to enter')
-    - fill('selector', 'text to enter')
-    - send_keys('Enter')
-    - scroll('down')
-    Use single quotes around string arguments.
-    When clicking, use the BrowserGym element IDs (BIDs) listed in the user message.
-    If you are unsure, respond with noop().
-    Do not include explanations or additional text.
-    """
-).strip()
+    def parse(self, observation):
+        key = self._build_cache_key(observation)
+        if key in self.cache:
+            return self.cache[key]
 
+        if observation.task_type == "easy":
+            result = self._parse_easy(observation)
+        elif observation.task_type == "medium":
+            result = self._parse_medium(observation)
+        else:
+            result = self._parse_hard(observation)
 
-def build_history_lines(history: List[str]) -> str:
-    if not history:
-        return "None"
-    return "\n".join(history[-4:])
+        self.cache[key] = result
+        return result
 
+    def _parse_easy(self, obs):
+        prompt = self._build_easy_prompt(obs)
+        response = self._call_llm(prompt)
+        return self._parse_easy_response(response, obs)
 
-def extract_screenshot_uri(observation) -> Optional[str]:
-    if observation.screenshot is None:
-        return None
-    screen_array = np.array(observation.screenshot, dtype=np.uint8)
-    image = Image.fromarray(screen_array)
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-    buffer.seek(0)
-    data_uri = base64.b64encode(buffer.read()).decode("utf-8")
-    return f"data:image/png;base64,{data_uri}"
+    def _build_easy_prompt(self, obs):
+        return ""
 
+    def _parse_easy_response(self, text, obs):
+        return "do_nothing", 0.0, None
 
-def extract_clickable_elements(observation) -> List[Dict[str, str]]:
-    """Collect BrowserGym element IDs that can be clicked."""
+    def _parse_medium(self, obs):
+        prompt = self._build_medium_prompt(obs)
+        response = self._call_llm(prompt)
+        return self._parse_medium_response(response, obs)
 
-    metadata = getattr(observation, "metadata", {}) or {}
-    obs_dict = metadata.get("browsergym_obs", {}) or {}
-    extra_props = obs_dict.get("extra_element_properties", {}) or {}
+    def _build_medium_prompt(self, obs):
+        return f"""
+DO NOT output anything except valid JSON.
 
-    clickables: List[Dict[str, str]] = []
-    for bid, props in extra_props.items():
-        if not props.get("clickable"):
-            continue
+You are diagnosing a subtle production issue.
 
-        bbox = props.get("bbox") or []
-        bbox_str = ", ".join(bbox) if bbox else "?"
-        clickables.append(
-            {
-                "bid": str(bid),
-                "bbox": bbox_str,
-            }
-        )
+IMPORTANT:
+- Logs and system metrics appear NORMAL
+- The issue must be inferred from USER COMPLAINTS
 
-    # Keep a stable ordering for readability
-    clickables.sort(key=lambda item: item["bid"])
-    return clickables
+User complaints:
+{obs.user_messages}
 
+Logs:
+{obs.logs}
 
-def build_user_prompt(step: int, observation, history: List[str]) -> str:
-    goal = observation.goal or "(not provided)"
-    url = observation.url or "(unknown)"
-    error_note = "Yes" if observation.last_action_error else "No"
+System metrics:
+{obs.system_metrics}
 
-    clickables = extract_clickable_elements(observation)
-    if clickables:
-        actions_hint = "\n".join(
-            f"    - {item['bid']} (bbox: {item['bbox']})" for item in clickables
-        )
-    else:
-        actions_hint = "    (none detected)"
+Available actions:
+{obs.available_actions}
 
-    prompt = textwrap.dedent(
-        f"""
-        Step: {step}
-        Goal: {goal}
-        Current URL: {url}
-        Previous steps:
-        {build_history_lines(history)}
-        Last action error: {error_note}
-        Available clickable element IDs: {actions_hint}
-        Reply with exactly one BrowserGym action string.
-        """
-    ).strip()
-    return prompt
+Goal: Choose the NEXT BEST ACTION to move toward resolving the issue.
 
+Return ONLY JSON:
+{{
+    "action": "<one of available_actions>",
+    "confidence": 0.0-1.0
+}}
+"""
 
-def parse_model_action(response_text: str) -> str:
-    if not response_text:
-        return FALLBACK_ACTION
+    def _parse_medium_response(self, text, obs):
+        try:
+            data = json.loads(text)
+            action = data.get("action", "do_nothing")
+            confidence = float(data.get("confidence", 0.3))
+            if action not in obs.available_actions:
+                action = "do_nothing"
+            confidence = max(0.0, min(1.0, confidence))
+            return action, confidence, None
+        except Exception:
+            return "do_nothing", 0.3, None
 
-    # Prefer the first line that looks like an action string
-    lines = response_text.splitlines()
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line:
-            continue
-        line = ACTION_PREFIX_RE.sub("", line)
-        match = ACTION_PATTERN.search(line)
-        if match:
-            action = match.group(0).strip()
-            # Collapse internal whitespace
-            action = re.sub(r"\s+", " ", action)
-            # If the model tried to click by natural-language description while we
-            # only exposed numeric BrowserGym IDs, fallback to the single detected ID.
-            return action
+    def _parse_hard(self, obs):
+        prompt = self._build_hard_prompt(obs)
+        response = self._call_llm(prompt)
+        return self._parse_hard_response(response, obs)
 
-    # Fall back to searching the whole response
-    match = ACTION_PATTERN.search(response_text)
-    if match:
-        action = match.group(0).strip()
-        action = re.sub(r"\s+", " ", action)
-        return action
+    def _build_hard_prompt(self, obs):
+        return f"""
+DO NOT output anything except valid JSON.
 
-    return FALLBACK_ACTION
+You are managing a catastrophic system failure. You must follow the SLA Playbook rules exactly.
+
+Playbook:
+{obs.playbook_text}
+
+System State:
+{json.dumps(obs.system_state, indent=2)}
+
+Logs:
+{obs.logs}
+
+Available Actions:
+{json.dumps(obs.available_actions)}
+
+Step Count: {obs.step_count}
+
+Goal: Choose the exact string from Available Actions to execute next. 
+Do not hallucinate actions.
+
+Return ONLY JSON:
+{{
+    "action": "<exact_string_from_available_actions>",
+    "target": null,
+    "confidence": 0.0-1.0
+}}
+"""
+
+    def _parse_hard_response(self, text, obs):
+        try:
+            data = json.loads(text)
+            action = data.get("action", "do_nothing")
+            target = data.get("target", None)
+            confidence = max(0.0, min(1.0, float(data.get("confidence", 0.5))))
+            return action, confidence, target
+        except Exception:
+            return "do_nothing", 0.0, None
+
+    def _call_llm(self, prompt):
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=150
+            )
+            return response.choices[0].message.content or ""
+        except Exception:
+            return ""
+
+    def _build_cache_key(self, obs):
+        return json.dumps({
+            "task": obs.task_type,
+            "messages": getattr(obs, "user_messages", None),
+            "logs": getattr(obs, "logs", ""),
+            "metrics": getattr(obs, "system_metrics", None),
+            "state": getattr(obs, "system_state", None)
+        }, sort_keys=True)
 
 
 def main() -> None:
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    env = DevOpsEnv(task_type="hard", seed=None)
+    parser = LLMParser()
+    
+    obs = env.reset()
+    total_reward = 0.0
+    done = False
+    
+    print("Starting Inference on HARD Task...")
+    
+    while not done:
+        action_str, confidence, target = parser.parse(obs)
+        action = Action(action_type=action_str, target=target)
+        
+        obs, reward, done, info = env.step(action)
+        total_reward += reward
+        
+        print(f"Step {obs.step_count}: Action: {action_str} | Reward: {reward:+.2f}")
+        
+        if done:
+            print("Episode complete.")
+            if "reason" in info:
+                print(f"Termination Reason: {info['reason']}")
+            break
 
-    env = BrowserGymEnv.from_docker_image(
-        image="browsergym-env:latest",
-        env_vars={
-            "BROWSERGYM_BENCHMARK": "miniwob",
-            "BROWSERGYM_TASK_NAME": "click-test",
-        },
-    )
+    min_reward = -5.0
+    max_reward = 1.0
+    final_score = (total_reward - min_reward) / (max_reward - min_reward)
+    final_score = max(0.0, min(1.0, final_score))
 
-    history: List[str] = []
-
-    try:
-        result = env.reset()
-        observation = result.observation
-        print(f"Episode goal: {observation.goal}")
-
-        for step in range(1, MAX_STEPS + 1):
-            if result.done:
-                print("Environment signalled done. Stopping early.")
-                break
-
-            user_prompt = build_user_prompt(step, observation, history)
-            user_content = [{"type": "text", "text": user_prompt}]
-            screenshot_uri = extract_screenshot_uri(observation)
-            if screenshot_uri:
-                user_content.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": screenshot_uri},
-                    }
-                )
-
-            messages = [
-                {
-                    "role": "system",
-                    "content": [{"type": "text", "text": SYSTEM_PROMPT}],
-                },
-                {
-                    "role": "user",
-                    "content": user_content,
-                },
-            ]
-
-            try:
-                completion = client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=messages,
-                    temperature=TEMPERATURE,
-                    max_tokens=MAX_TOKENS,
-                    stream=False,
-                )
-                response_text = completion.choices[0].message.content or ""
-            # pylint: disable=broad-except
-            except Exception as exc:  # noqa: BLE001
-                failure_msg = f"Model request failed ({exc}). Using fallback action."
-                print(failure_msg)
-                response_text = FALLBACK_ACTION
-
-            action_str = parse_model_action(response_text)
-            print(f"Step {step}: model suggested -> {action_str}")
-
-            result = env.step(BrowserGymAction(action_str=action_str))
-            observation = result.observation
-
-            reward = result.reward or 0.0
-            error_flag = " ERROR" if observation.last_action_error else ""
-            history_line = (
-                f"Step {step}: {action_str} -> reward {reward:+.2f}{error_flag}"
-            )
-            history.append(history_line)
-            print(
-                "  Reward: "
-                f"{reward:+.2f} | Done: {result.done} | Last action error: "
-                f"{observation.last_action_error}"
-            )
-
-            if result.done:
-                print("Episode complete.")
-                break
-
-        else:
-            print(f"Reached max steps ({MAX_STEPS}).")
-
-    finally:
-        env.close()
-
+    print(f"Total Reward: {total_reward:+.2f}")
+    print(f"Final Score: {final_score:.4f}")
 
 if __name__ == "__main__":
     main()
-
