@@ -47,6 +47,7 @@ class LLMParser:
 
     def _parse_medium(self, obs):
         prompt = self._build_medium_prompt(obs)
+        # print("="*50,"\nPrompt:\n",prompt)
         response = self._call_llm(prompt)
         return self._parse_medium_response(response, obs)
 
@@ -56,9 +57,21 @@ DO NOT output anything except valid JSON.
 
 You are diagnosing a subtle production issue.
 
-IMPORTANT:
-- Logs and system metrics appear NORMAL
-- The issue must be inferred from USER COMPLAINTS
+IMPORTANT CONTEXT:
+- System metrics appear NORMAL (CPU, error rate etc.)
+- The issue is hidden and must be inferred from USER COMPLAINTS and LOG PATTERNS
+- The system evolves after each step:
+    • Logs will change
+    • User complaints will become better or worse
+    • System health improves or degrades based on your actions
+
+STRATEGY:
+- Do NOT jump to fixes immediately
+- First identify patterns from complaints
+- Then infer root cause from logs
+- Then apply fix
+- Incorrect or random actions will worsen the system
+- Avoid repeating the same action unless the system state changes.
 
 User complaints:
 {obs.user_messages}
@@ -72,7 +85,10 @@ System metrics:
 Available actions:
 {obs.available_actions}
 
-Goal: Choose the NEXT BEST ACTION to move toward resolving the issue.
+Step count: {obs.step_count}
+
+Goal:
+Choose the NEXT BEST ACTION that moves the system closer to resolution.
 
 Return ONLY JSON:
 {{
@@ -80,7 +96,6 @@ Return ONLY JSON:
     "confidence": 0.0-1.0
 }}
 """
-
     def _parse_medium_response(self, text, obs):
         try:
             data = json.loads(text)
@@ -160,8 +175,65 @@ Return ONLY JSON:
             "state": getattr(obs, "system_state", None)
         }, sort_keys=True)
 
+def grade_medium():
+    """
+    Runs one medium task episode and returns final normalized score.
+    Uses LLM to choose actions step-by-step.
+    """
 
-def main() -> None:
+    env = DevOpsEnv(task_type="medium")
+    parser = LLMParser()
+
+    obs = env.reset()
+    total_reward = 0.0
+    done = False
+
+    print("[START] task=medium env=devops")
+
+    while not done:
+        # -------------------------------------
+        # LLM decides next action
+        # -------------------------------------
+        action_str, confidence, _ = parser.parse(obs)
+
+        action = Action(action_type=action_str)
+
+        # -------------------------------------
+        # Step environment
+        # -------------------------------------
+        obs, reward, done, info = env.step(action)
+
+        total_reward += reward
+
+        # -------------------------------------
+        # Logging (hackathon format style)
+        # -------------------------------------
+        print(
+            f"[STEP] step={obs.step_count} action={action_str} "
+            f"reward={reward:+.2f} done={str(done).lower()} error=null"
+        )
+
+        if done:
+            break
+
+    # -------------------------------------
+    # Normalize score (same logic as hard)
+    # -------------------------------------
+    min_reward = -3.0
+    max_reward = 2.0
+
+    final_score = (total_reward - min_reward) / (max_reward - min_reward)
+    final_score = max(0.0, min(1.0, final_score))
+
+    print(
+        f"[END] success={str(done).lower()} "
+        f"steps={obs.step_count} rewards={total_reward:.2f}"
+    )
+
+    return final_score
+
+
+def grade_hard():
     env = DevOpsEnv(task_type="hard", seed=None)
     parser = LLMParser()
     
@@ -193,6 +265,9 @@ def main() -> None:
 
     print(f"Total Reward: {total_reward:+.2f}")
     print(f"Final Score: {final_score:.4f}")
+
+def main() -> None:
+    print("Final Score = ",grade_medium())
 
 if __name__ == "__main__":
     main()
