@@ -161,14 +161,15 @@ class DevOpsEnv:
             impact_str = "Time passed"
             hint_str = "Waiting for actions"
 
+        # Update User Messages
         self.state_data["user_messages"] = new_messages
 
-        # Append to observation logs
-        self.state_data["logs"] += (
-            f"\n--- Step {self.step_count} ---\n"
-            f"[ACTION] {action_str}\n"
-            f"[IMPACT] {impact_str}\n"
-            f"[HINT] {hint_str}\n"
+        # OVERWRITE logs instead of appending (Stateful Snapshot)
+        # This keeps the token count flat and optimizes LLM caching
+        self.state_data["logs"] = (
+            f"[LAST ACTION]: {action_str}\n"
+            f"[IMPACT]: {impact_str}\n"
+            f"[HINT]: {hint_str}"
         )
 
         # Check success conditions dynamically
@@ -178,18 +179,17 @@ class DevOpsEnv:
             
         if self.step_count >= self.max_steps:
             done = True
+        
         print(action," -- ", reward)
 
-        obs = Observation(
+        return Observation(
             task_type="medium",
             available_actions=self.state_data["available_actions"],
             user_messages=self.state_data["user_messages"],
             system_metrics=state.get("metrics", {}),
-            logs=self.state_data["logs"],
+            logs=self.state_data["logs"], # Now contains only the latest snapshot
             step_count=self.step_count
-        )
-
-        return obs, reward, done, {}
+        ), reward, done, {}
 
     def _step_hard(self, action: Action):
         done = False
