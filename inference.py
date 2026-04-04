@@ -56,22 +56,16 @@ class LLMParser:
         return f"""
 DO NOT output anything except valid JSON.
 
-You are diagnosing a production issue.
+You are an AI agent diagnosing a production issue in a dynamic environment.
 
-- Logs contain a running history of actions and their effects.
-- Also listen to user messages, they highlight potential issues.
-- Use them carefully to understand what worked and what did not.
-- Avoid repeating actions that show "No meaningful change".
-
-General approach:
-- Start by understanding patterns in failures
-- Then investigate deeper causes
-- Once confident, take corrective action
+- **Logs (Snapshot):** The Logs section now only shows the result of your **very last action**. Use the [IMPACT] and [HINT] provided to understand how the system state changed.
+- **User Complaints:** These are your primary signal for overall system health. If complaints remain "unchanged" or "bad," your last action likely didn't address the root cause.
+- **Decision Making:** Since you only see the most recent result, maintain an internal logic of your progress. Avoid repeating actions that previously yielded "No meaningful change" or "Analysis already complete."
 
 User complaints:
 {obs.user_messages}
 
-Logs:
+Last Action Result:
 {obs.logs}
 
 Available actions:
@@ -190,23 +184,54 @@ Return ONLY JSON:
                 "state": getattr(obs, "system_state", None)
             }, sort_keys=True)
 
-def grade_medium():
+def grade_medium(num_scenarios = 1):
+    total_score = 0.0
+    
     env = DevOpsEnv(task_type="medium")
     parser = LLMParser()
-    obs = env.reset()
-    total_reward = 0.0
-    done = False
     
-    print("[START] medium")
-    while not done:
-        action_str, _, _ = parser.parse(obs, [])
-        obs, reward, done, _ = env.step(Action(action_type=action_str))
-        total_reward += reward
-        print(f"[STEP] {obs.step_count} | {action_str} | {reward:+.2f}")
+    for i in range(num_scenarios):
+        obs = env.reset()
+        total_reward = 0.0
+        done = False
+        rewards_list = []
+        
+        # [START] line at episode begin [cite: 28, 29]
+        print(f"[START] task=medium_scenario_{i+1} env=ops-sim model={MODEL_NAME}")
+        
+        for step in range(MAX_STEPS):
+            action_str, _, target = parser.parse(obs)
+            
+            # Basic validation for error reporting 
+            error_msg = "null"
+            if action_str not in obs.available_actions:
+                error_msg = f"invalid_action_{action_str}"
+                action_str = "do_nothing"
 
-    score = max(0, min(1, (total_reward - -3.0) / (2.0 - -3.0)))
-    print(f"[END] reward={total_reward:.2f} score={score:.2f}")
-    return score
+            obs, reward, done, info = env.step(Action(action_type=action_str, target=target))
+            total_reward += reward
+            rewards_list.append(f"{reward:.2f}")
+
+            # [STEP] line immediately after env.step() [cite: 28, 29]
+            # Ensure lowercase booleans and 2f reward formatting 
+            print(f"[STEP] step={step+1} action={action_str} reward={reward:.2f} done={str(done).lower()} error={error_msg}")
+            
+            if done:
+                break
+
+        # Calculate success for the [END] line [cite: 30]
+        # Success is typically true if the bug was resolved (done) and reward is positive
+        success = "true" if (done and total_reward > 0) else "false"
+        rewards_str = ",".join(rewards_list)
+
+        # [END] line after episode completion [cite: 28, 30]
+        print(f"[END] success={success} steps={len(rewards_list)} rewards={rewards_str}")
+
+        # Internal scoring logic for your own tracking
+        scenario_score = max(0.0, min(1.0, (total_reward - -3.0) / (2.0 - -3.0)))
+        total_score += scenario_score
+
+    return total_score / num_scenarios
 
 def _calculate_dynamic_min_reward(env: DevOpsEnv, max_steps: int) -> float:
     worst_bleed_per_step = 0.0
@@ -272,7 +297,7 @@ def grade_hard():
     return final_score
 
 def main() -> None:
-    grade_hard()
+    print("Final Score =", grade_medium())
 
 if __name__ == "__main__":
     main()

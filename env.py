@@ -37,21 +37,22 @@ class DevOpsEnv:
 
         self.state_data = {
             "state": scenario["initial_state"].copy(),
-            "logs": scenario["observation"]["logs"],
-            "user_messages": list(scenario["observation"]["user_messages"]),
-            "system_metrics": scenario["observation"]["system_metrics"],
-            "action_space": scenario["action_space"],
-            "log_templates": scenario["log_templates"],
-            "rewards": scenario["dynamic_rewards"],
-            "penalties": scenario["dynamic_penalties"],
+            "logs": scenario.get("initial_logs", ""),
+            "user_messages": scenario.get("initial_messages", []),
+            "available_actions": scenario["available_actions"],
+            "transition_rules": scenario.get("transition_rules", {}),
+            "success_condition": scenario.get("success_condition", []),
+            "repeat_penalty": scenario.get("repeat_penalty", -0.15),
+            "invalid_action_penalty": scenario.get("invalid_action_penalty", -0.2),
+            "step_penalty": scenario.get("step_penalty", -0.03),
             "history": []
         }
 
         return Observation(
             task_type="medium",
-            available_actions=self.state_data["action_space"],
+            available_actions=self.state_data["available_actions"],
             user_messages=self.state_data["user_messages"],
-            system_metrics=self.state_data["system_metrics"],
+            system_metrics=self.state_data["state"].get("metrics", {}),
             logs=self.state_data["logs"],
             step_count=self.step_count
         )
@@ -113,152 +114,84 @@ class DevOpsEnv:
         return None, 0.0, False, {}
 
     def _step_medium(self, action: Action):
-        reward = 0
+        action_str = action.action_type
+        state = self.state_data["state"]
+        history = self.state_data["history"]
+        rules = self.state_data["transition_rules"]
+
+        reward = 0.0
         done = False
 
-        state = self.state_data["state"]
-        logs = self.state_data["logs"]
-        history = self.state_data["history"]
-        templates = self.state_data["log_templates"]
-        rewards_cfg = self.state_data["rewards"]
-        penalties_cfg = self.state_data["penalties"]
-
-        action_str = action.action_type
-        history.append(action_str)
-
-        prev_state = state.copy()
-        prev_health = state["service_health"]
-
-        if not state["pattern_identified"]:
-            allowed = ["analyze_failure_pattern"]
-        elif not state["root_cause_identified"]:
-            allowed = ["identify_edge_case_condition", "inspect_transaction_logs"]
-        elif state["bug_active"]:
-            allowed = ["apply_transaction_fix"]
-        else:
-            allowed = []
-
-        allowed += ["restart_payment_service", "do_nothing"]
-
-        if action_str not in allowed:
-            reward -= 0.2
+        # Validate action
+        if action_str not in self.state_data["available_actions"] and action_str != "do_nothing":
+            reward += self.state_data["invalid_action_penalty"]
             action_str = "do_nothing"
 
+        # Apply repeat penalty
         repeat_count = history.count(action_str)
-        if repeat_count > 1:
-            reward -= 0.15 * (repeat_count - 1)
+        if repeat_count > 0 and action_str != "do_nothing":
+            reward += self.state_data["repeat_penalty"] * repeat_count
 
-        new_log = templates.get(action_str, "")
+        history.append(action_str)
+        
+        # Apply standard step decay
+        reward += self.state_data["step_penalty"] * self.step_count
 
-        if action_str == "analyze_failure_pattern":
-            if not state["pattern_identified"]:
-                state["pattern_identified"] = True
-                state["service_health"] += 0.1
-                reward += rewards_cfg["pattern_identified"]
+        # Default fallback strings
+        impact_str = "No meaningful change"
+        hint_str = "System stable" if state.get("bug_active") is False else "Investigate the system state."
+        new_messages = self.state_data["user_messages"]
+
+        # Process Rules Engine
+        if action_str in rules:
+            rule = rules[action_str]
+            condition = rule.get("condition", "true")
+
+            if self.evaluate_condition(state, condition):
+                self.apply_effects(state, rule.get("effects", {}))
+                reward += rule.get("reward", 0.0)
+                impact_str = rule.get("log_impact", impact_str)
+                hint_str = rule.get("hint", hint_str)
+                new_messages = rule.get("user_messages", new_messages)
             else:
-                reward -= 0.2
-
-        elif action_str == "identify_edge_case_condition":
-            if state["pattern_identified"] and not state["root_cause_identified"]:
-                state["root_cause_identified"] = True
-                state["service_health"] += 0.15
-                reward += rewards_cfg["root_cause_identified"]
-            else:
-                reward -= 0.2
-
-        elif action_str == "apply_transaction_fix":
-            if state["root_cause_identified"] and state["bug_active"]:
-                state["bug_active"] = False
-                state["service_health"] += 0.3
-                reward += rewards_cfg["bug_fixed"]
-                done = True
-            else:
-                reward -= 0.3
-
-        elif action_str == "inspect_transaction_logs":
-            if not state["root_cause_identified"]:
-                state["service_health"] += 0.05
-                reward -= 0.02
-            else:
-                reward -= 0.1
-
-        elif action_str == "restart_payment_service":
-            state["service_health"] -= 0.2
-            reward += penalties_cfg["restart_without_diagnosis"]
-
+                self.apply_effects(state, rule.get("else_effects", {}))
+                reward += rule.get("else_reward", 0.0)
+                impact_str = rule.get("else_log_impact", impact_str)
+                hint_str = rule.get("else_hint", hint_str)
+                new_messages = rule.get("else_user_messages", new_messages)
+                
         elif action_str == "do_nothing":
-            state["service_health"] -= 0.1
             reward -= 0.1
+            impact_str = "Time passed"
+            hint_str = "Waiting for actions"
 
-        state["service_health"] = max(0, min(1, state["service_health"]))
+        # Update User Messages
+        self.state_data["user_messages"] = new_messages
 
-        if state == prev_state:
-            reward -= 0.2
-
-        reward -= 0.03 * self.step_count
-
-        if state["root_cause_identified"] and action_str != "apply_transaction_fix":
-            reward -= 0.1
-
-        impact = []
-
-        for k in state:
-            if k != "service_health" and prev_state[k] != state[k]:
-                impact.append(f"{k} → {state[k]}")
-
-        delta = state["service_health"] - prev_health
-        if abs(delta) > 1e-6:
-            sign = "+" if delta > 0 else ""
-            impact.append(f"health {prev_health:.2f}→{state['service_health']:.2f} ({sign}{delta:.2f})")
-
-        if not impact:
-            impact.append("No meaningful change")
-
-        if not state["pattern_identified"]:
-            hint = "Look for patterns in failures"
-        elif not state["root_cause_identified"]:
-            hint = "Investigate logs deeper"
-        elif state["bug_active"]:
-            hint = "A fix is now possible"
-        else:
-            hint = "System stable"
-
-        self.state_data["logs"] += (
-            f"\n--- Step {self.step_count} ---\n"
-            f"[ACTION] {action_str}\n"
-            f"[IMPACT] {'; '.join(impact)}\n"
-            f"[HINT] {hint}\n"
+        # OVERWRITE logs instead of appending (Stateful Snapshot)
+        # This keeps the token count flat and optimizes LLM caching
+        self.state_data["logs"] = (
+            f"[LAST ACTION]: {action_str}\n"
+            f"[IMPACT]: {impact_str}\n"
+            f"[HINT]: {hint_str}"
         )
 
-        if done:
-            self.state_data["user_messages"] = ["Everything is working perfectly now"]
-
-        else:
-            if state["service_health"] > prev_health:
-                self.state_data["user_messages"] = [
-                    "Seems slightly better",
-                    "Still not fully fixed though"
-                ]
-            elif state["service_health"] < prev_health:
-                self.state_data["user_messages"] = [
-                    "This is getting worse",
-                    "More failures now"
-                ]
-            else:
-                self.state_data["user_messages"] = [
-                    "Still inconsistent",
-                    "No real improvement"
-                ]
-
+        # Check success conditions dynamically
+        success_conds = self.state_data["success_condition"]
+        if success_conds and all(self.evaluate_condition(state, cond) for cond in success_conds):
+            done = True
+            
         if self.step_count >= self.max_steps:
             done = True
+        
+        # print(action," -- ", reward)
 
         return Observation(
             task_type="medium",
-            available_actions=allowed,
+            available_actions=self.state_data["available_actions"],
             user_messages=self.state_data["user_messages"],
-            system_metrics=self.state_data["system_metrics"],
-            logs=self.state_data["logs"],
+            system_metrics=state.get("metrics", {}),
+            logs=self.state_data["logs"], # Now contains only the latest snapshot
             step_count=self.step_count
         ), reward, done, {}
 
