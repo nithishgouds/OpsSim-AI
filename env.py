@@ -70,12 +70,16 @@ class DevOpsEnv:
             "optimal_solution_path": scenario.get("optimal_solution_path", []),
             "transition_rules": scenario.get("transition_rules", {}),
             "bleed_rules": scenario.get("bleed_rules", []),
-            "sla_rules": scenario.get("sla_rules", {"required": [], "forbidden": []})
+            "sla_rules": scenario.get("sla_rules", {"required": [], "forbidden": []}),
+            "sla_violation_penalty": scenario.get("sla_violation_penalty", -1.0),
+            "history": []
         }
 
-        available_actions = list(self.state_data["optimal_solution_path"])
-        available_actions.extend(list(self.state_data["penalties"].keys()))
-        available_actions.append("do_nothing")
+        available_actions = scenario.get("available_actions", [])
+        if not available_actions:
+            available_actions = list(self.state_data["optimal_solution_path"])
+            available_actions.extend(list(self.state_data["penalties"].keys()))
+            available_actions.append("do_nothing")
         
         available_actions = sorted(list(set(available_actions)))
 
@@ -268,8 +272,17 @@ class DevOpsEnv:
 
         action_penalty = 0.0
 
-        if action_str not in self.observation.available_actions and action_str != "do_nothing":
+        if action_str not in self.observation.available_actions:
             action_penalty -= 0.2
+
+        if action_str == "do_nothing":
+            action_penalty -= 0.3
+
+        repeat_count = self.state_data["history"].count(action_str)
+        if repeat_count > 0:
+            action_penalty -= 0.15 * repeat_count
+            
+        self.state_data["history"].append(action_str)
 
         if action_str in self.state_data["penalties"]:
             penalty_val = float(self.state_data["penalties"][action_str])
@@ -278,31 +291,37 @@ class DevOpsEnv:
             if penalty_val <= -0.8:
                 self.observation.system_state = state
                 self.observation.step_count = self.step_count
-                return self.observation, -1.0, True, {"reason": "guardrail_violation"}
+                return self.observation, self.state_data.get("sla_violation_penalty", -1.0), True, {"reason": "guardrail_violation"}
 
-        # Store previous state for progress detection
         prev_state = json.loads(json.dumps(state))
 
-        # Fully Data-Driven Transitions
         self._apply_state_transition(state, action_str)
 
-        # Detect positive progress
-        progress_reward = 0.0
-        if self._detect_positive_progress(prev_state, state):
-            progress_reward = 0.1
+        if json.dumps(prev_state) == json.dumps(state):
+            action_penalty -= 0.2
 
-        # Calculate standard penalties
+        progress_reward = 0.0
+        improvement_level = self._detect_positive_progress(prev_state, state)
+        if improvement_level == "critical":
+            progress_reward += 0.3
+        elif improvement_level == "moderate":
+            progress_reward += 0.1
+        elif improvement_level == "minor":
+            progress_reward += 0.05
+            
+        if self._detect_sla_improvement(prev_state, state):
+            progress_reward += 0.2
+
         bleed_loss = self._calculate_dynamic_bleed(state)
-        urgency_penalty = -0.01 * self.step_count
+        urgency_penalty = -0.05 * self.step_count
         success_reward = 0.0
         
-        # Explicit SLA validation replaces old tradeoff mechanics
         sla_status = self._check_sla_compliance(state)
 
         if sla_status == "FAIL":
             self.observation.system_state = state
             self.observation.step_count = self.step_count
-            return self.observation, -1.0, True, {"reason": "sla_violation"}
+            return self.observation, self.state_data.get("sla_violation_penalty", -1.0), True, {"reason": "sla_violation"}
 
         if sla_status == "PASS":
             success_reward = 1.0
@@ -314,14 +333,20 @@ class DevOpsEnv:
         step_reward = bleed_loss + action_penalty + urgency_penalty + progress_reward + success_reward
 
         self.observation.system_state = state
+        self.observation.logs += f"\nStep {self.step_count}: {action_str} -> Reward: {step_reward:.2f}"
         return self.observation, step_reward, done, {}
+        
+    def _detect_sla_improvement(self, prev_state, new_state) -> bool:
+        required_rules = self.state_data.get("sla_rules", {}).get("required", [])
+        if not required_rules:
+            return False
+            
+        prev_passed = sum(1 for cond in required_rules if self.evaluate_condition(prev_state, cond))
+        new_passed = sum(1 for cond in required_rules if self.evaluate_condition(new_state, cond))
+        
+        return new_passed > prev_passed
 
-    # ==========================================
-    # DATA-DRIVEN HARD TASK HELPER FUNCTIONS
-    # ==========================================
-
-    def _detect_positive_progress(self, prev_state, new_state) -> bool:
-        """Detects if the new state is meaningfully better than the previous state."""
+    def _detect_positive_progress(self, prev_state, new_state) -> str:
         def extract_values(d, prefix=""):
             vals = {}
             for k, v in d.items():
@@ -335,16 +360,17 @@ class DevOpsEnv:
         prev_vals = extract_values(prev_state)
         new_vals = extract_values(new_state)
 
-        # Heuristics to define what constitutes a "bad" vs "good" status string
-        negative_terms = ["failing", "degraded", "overloaded", "maxed", "offline", "dropped", "severed"]
+        critical_terms = ["failing", "offline", "dead", "severed"]
+        moderate_terms = ["degraded", "overloaded", "maxed", "dropped", "stalled"]
         positive_terms = ["online", "healthy", "stable", "complete", "normal", "routed", "restored", "scrubbed_and_stable"]
+
+        improvement = "none"
 
         for key, new_val in new_vals.items():
             prev_val = prev_vals.get(key)
             if prev_val == new_val or prev_val is None:
                 continue
 
-            # 1. Numeric improvement (lower is better for loads, connections, errors, costs)
             def parse_num(v):
                 if isinstance(v, (int, float)): return float(v)
                 if isinstance(v, str):
@@ -359,25 +385,32 @@ class DevOpsEnv:
 
             if prev_num is not None and new_num is not None:
                 if new_num < prev_num:
-                    return True
+                    improvement = "moderate"
 
-            # 2. String status improvement
             if isinstance(prev_val, str) and isinstance(new_val, str):
                 prev_str = prev_val.lower()
                 new_str = new_val.lower()
 
-                was_bad = any(t in prev_str for t in negative_terms)
-                is_bad_now = any(t in new_str for t in negative_terms)
+                was_critical = any(t in prev_str for t in critical_terms)
+                is_critical_now = any(t in new_str for t in critical_terms)
+                
+                was_moderate = any(t in prev_str for t in moderate_terms)
+                is_moderate_now = any(t in new_str for t in moderate_terms)
+                
                 is_good_now = any(t in new_str for t in positive_terms)
 
-                # Check if it moved from a explicitly bad state, or strictly into an explicitly good state
-                if (was_bad and not is_bad_now) or (not was_bad and is_good_now):
-                    return True
+                if (was_critical and not is_critical_now):
+                    return "critical"
+                elif (was_moderate and not is_moderate_now) or (not was_moderate and is_good_now and not was_critical):
+                    if improvement != "critical":
+                        improvement = "moderate"
+                elif is_good_now and not was_critical and not was_moderate:
+                     if improvement == "none":
+                         improvement = "minor"
 
-        return False
+        return improvement
 
     def evaluate_condition(self, state, condition_string):
-        """Dynamically evaluates conditions like 'services.checkout.status == online'"""
         if not condition_string:
             return True
             
@@ -388,6 +421,8 @@ class DevOpsEnv:
 
         match = re.match(r"([\w\.]+)\s*(==|!=|<=|>=|<|>|IN)\s*(.+)", condition_string)
         if not match:
+            if condition_string.strip() == "1 == 1":
+                return True
             return True
             
         key, op, val_str = match.groups()
@@ -439,7 +474,6 @@ class DevOpsEnv:
         return False
 
     def apply_effects(self, state, effects_dict):
-        """Dynamically modifies deeply nested state paths via rules dictionary"""
         if not effects_dict:
             return
             
@@ -452,7 +486,6 @@ class DevOpsEnv:
                 curr = curr[p]
             target_key = parts[-1]
             
-            # Subtraction/Addition handler
             if isinstance(effect, str) and effect.startswith("-") and effect[1:].replace('.', '').isdigit():
                 current_val = float(str(curr.get(target_key, 0)).replace('%',''))
                 curr[target_key] = max(0.0, current_val - float(effect[1:]))
@@ -481,23 +514,19 @@ class DevOpsEnv:
         return bleed
 
     def _check_sla_compliance(self, state) -> str:
-        """Evaluates system state against required business logic/guardrails"""
         sla_rules = self.state_data.get("sla_rules", {})
         forbidden_rules = sla_rules.get("forbidden", [])
         required_rules = sla_rules.get("required", [])
 
-        # 1. If ANY forbidden condition is TRUE -> FAIL immediately
         for cond in forbidden_rules:
             if self.evaluate_condition(state, cond):
                 return "FAIL"
 
-        # 2. If ALL required conditions are TRUE -> PASS
         if required_rules:
             all_passed = all(self.evaluate_condition(state, cond) for cond in required_rules)
             if all_passed:
                 return "PASS"
         
-        # 3. Else -> INCOMPLETE
         return "INCOMPLETE"
 
     def state(self):
