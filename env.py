@@ -1,12 +1,15 @@
 import json
 import os
+import random
+import re
 from models import Observation, Action
 
 class DevOpsEnv:
     def __init__(self, seed=42, max_steps=8, task_type="hard"):
+        self.rng = random.Random(seed)
         self.max_steps = max_steps
         self.task_type = task_type
-        self.scenario_index = 0  # Deterministic sequential indexing
+        self.scenario_index = 0
         self.state_data = {}
         self.observation = None
 
@@ -57,7 +60,6 @@ class DevOpsEnv:
         with open(os.path.join("tasks", "hard.json"), "r") as f:
             dataset = json.load(f)["hard_tasks_dataset"]
 
-        # 5. DETERMINISM: Iterate sequentially instead of randomly
         scenario = dataset[self.scenario_index % len(dataset)]
         self.scenario_index += 1
 
@@ -66,14 +68,19 @@ class DevOpsEnv:
             "state": json.loads(json.dumps(scenario.get("initial_state", {}))),
             "penalties": scenario.get("penalties", {}).copy(),
             "optimal_solution_path": scenario.get("optimal_solution_path", []),
+            "transition_rules": scenario.get("transition_rules", {}),
+            "bleed_rules": scenario.get("bleed_rules", []),
+            "sla_rules": scenario.get("sla_rules", {"required": [], "forbidden": []}),
+            "sla_violation_penalty": scenario.get("sla_violation_penalty", -1.0),
+            "history": []
         }
 
-        # Dynamically populate available actions
-        available_actions = list(self.state_data["optimal_solution_path"])
-        available_actions.extend(list(self.state_data["penalties"].keys()))
-        available_actions.append("do_nothing")
+        available_actions = scenario.get("available_actions", [])
+        if not available_actions:
+            available_actions = list(self.state_data["optimal_solution_path"])
+            available_actions.extend(list(self.state_data["penalties"].keys()))
+            available_actions.append("do_nothing")
         
-        # Deduplicate and sort for deterministic output
         available_actions = sorted(list(set(available_actions)))
 
         self.observation = Observation(
@@ -106,7 +113,7 @@ class DevOpsEnv:
         return None, 0.0, False, {}
 
     def _step_medium(self, action: Action):
-        reward = 0 # base
+        reward = 0
         done = False
 
         state = self.state_data["state"]
@@ -122,9 +129,6 @@ class DevOpsEnv:
         prev_state = state.copy()
         prev_health = state["service_health"]
 
-        # -------------------------
-        # DYNAMIC ACTION SPACE
-        # -------------------------
         if not state["pattern_identified"]:
             allowed = ["analyze_failure_pattern"]
         elif not state["root_cause_identified"]:
@@ -136,21 +140,14 @@ class DevOpsEnv:
 
         allowed += ["restart_payment_service", "do_nothing"]
 
-        # invalid action → punish
         if action_str not in allowed:
             reward -= 0.2
             action_str = "do_nothing"
 
-        # -------------------------
-        # REPEAT PENALTY
-        # -------------------------
         repeat_count = history.count(action_str)
         if repeat_count > 1:
             reward -= 0.15 * (repeat_count - 1)
 
-        # -------------------------
-        # APPLY TRANSITIONS
-        # -------------------------
         new_log = templates.get(action_str, "")
 
         if action_str == "analyze_failure_pattern":
@@ -193,29 +190,16 @@ class DevOpsEnv:
             state["service_health"] -= 0.1
             reward -= 0.1
 
-        # clamp
         state["service_health"] = max(0, min(1, state["service_health"]))
 
-        # -------------------------
-        # NO PROGRESS PENALTY
-        # -------------------------
         if state == prev_state:
             reward -= 0.2
 
-        # -------------------------
-        # STEP PENALTY
-        # -------------------------
         reward -= 0.03 * self.step_count
 
-        # -------------------------
-        # FORCE PROGRESSION
-        # -------------------------
         if state["root_cause_identified"] and action_str != "apply_transaction_fix":
             reward -= 0.1
 
-        # -------------------------
-        # LOGGING (CLEAN + CAUSAL)
-        # -------------------------
         impact = []
 
         for k in state:
@@ -230,7 +214,6 @@ class DevOpsEnv:
         if not impact:
             impact.append("No meaningful change")
 
-        # hint (subtle)
         if not state["pattern_identified"]:
             hint = "Look for patterns in failures"
         elif not state["root_cause_identified"]:
@@ -247,9 +230,6 @@ class DevOpsEnv:
             f"[HINT] {hint}\n"
         )
 
-        # -------------------------
-        # USER MESSAGES
-        # -------------------------
         if done:
             self.state_data["user_messages"] = ["Everything is working perfectly now"]
 
@@ -270,7 +250,6 @@ class DevOpsEnv:
                     "No real improvement"
                 ]
 
-        # termination
         if self.step_count >= self.max_steps:
             done = True
 
@@ -290,164 +269,265 @@ class DevOpsEnv:
             action_str = f"{action.action_type}({action.target})"
 
         state = self.state_data["state"]
-        sid = self.state_data["scenario_id"]
 
-        # ==========================================
-        # 6. REWARD STRUCTURE - Part 2: Action Penalty
-        # ==========================================
         action_penalty = 0.0
 
-        # Action Validation Penalty
-        if action_str not in self.observation.available_actions and action_str != "do_nothing":
+        if action_str not in self.observation.available_actions:
             action_penalty -= 0.2
 
-        # Exact Penalty Matching & Guardrail Enforcement
+        if action_str == "do_nothing":
+            action_penalty -= 0.3
+
+        repeat_count = self.state_data["history"].count(action_str)
+        if repeat_count > 0:
+            action_penalty -= 0.15 * repeat_count
+            
+        self.state_data["history"].append(action_str)
+
         if action_str in self.state_data["penalties"]:
             penalty_val = float(self.state_data["penalties"][action_str])
             action_penalty += penalty_val
             
-            # 2. SLA PRIORITY: Immediate termination on guardrail violation
             if penalty_val <= -0.8:
                 self.observation.system_state = state
                 self.observation.step_count = self.step_count
-                return self.observation, -1.0, True, {"reason": "guardrail_violation"}
+                return self.observation, self.state_data.get("sla_violation_penalty", -1.0), True, {"reason": "guardrail_violation"}
 
-        # ==========================================
-        # STATE TRANSITIONS (Cause and Effect)
-        # ==========================================
-        self._apply_state_transition(sid, state, action_str)
+        prev_state = json.loads(json.dumps(state))
 
-        # ==========================================
-        # 6. REWARD STRUCTURE - Part 1: Dynamic Bleed
-        # 1. DYNAMIC BLEED: Based strictly on current state
-        # ==========================================
-        bleed_loss = self._calculate_dynamic_bleed(sid, state)
+        self._apply_state_transition(state, action_str)
 
-        # ==========================================
-        # 3. URGENCY PRESSURE: Time-based penalty
-        # ==========================================
-        urgency_penalty = -0.01 * self.step_count
+        if json.dumps(prev_state) == json.dumps(state):
+            action_penalty -= 0.2
 
-        # ==========================================
-        # 4. EPISODE TERMINATION & 6. Success Reward
-        # ==========================================
+        progress_reward = 0.0
+        improvement_level = self._detect_positive_progress(prev_state, state)
+        if improvement_level == "critical":
+            progress_reward += 0.3
+        elif improvement_level == "moderate":
+            progress_reward += 0.1
+        elif improvement_level == "minor":
+            progress_reward += 0.05
+            
+        if self._detect_sla_improvement(prev_state, state):
+            progress_reward += 0.2
+
+        bleed_loss = self._calculate_dynamic_bleed(state)
+        urgency_penalty = -0.05 * self.step_count
         success_reward = 0.0
         
-        # Episode ends ONLY when all bleeds are cleared (system stabilized)
-        if bleed_loss == 0.0:
+        sla_status = self._check_sla_compliance(state)
+
+        if sla_status == "FAIL":
+            self.observation.system_state = state
+            self.observation.step_count = self.step_count
+            return self.observation, self.state_data.get("sla_violation_penalty", -1.0), True, {"reason": "sla_violation"}
+
+        if sla_status == "PASS":
             success_reward = 1.0
             done = True
 
         if self.step_count >= self.max_steps:
             done = True
 
-        # Final Reward Calculation
-        step_reward = bleed_loss + action_penalty + urgency_penalty + success_reward
+        step_reward = bleed_loss + action_penalty + urgency_penalty + progress_reward + success_reward
 
         self.observation.system_state = state
+        self.observation.logs += f"\nStep {self.step_count}: {action_str} -> Reward: {step_reward:.2f}"
         return self.observation, step_reward, done, {}
-
-    def _apply_state_transition(self, sid, state, action_str):
-        """Applies exact state changes based on the agent's action."""
         
-        # E-Commerce Black Friday Scenario
-        if sid == "hard_001_ecommerce_black_friday":
-            if action_str == "shutdown(user_analytics)":
-                if state["services"]["user_analytics"]["status"] != "offline":
-                    state["services"]["user_analytics"]["status"] = "offline"
-                    state["overall_cpu_load"] = max(0, state["overall_cpu_load"] - 30)
-            elif action_str == "shutdown(recommendation_engine)":
-                if state["services"]["recommendation_engine"]["status"] != "offline":
-                    state["services"]["recommendation_engine"]["status"] = "offline"
-                    state["overall_cpu_load"] = max(0, state["overall_cpu_load"] - 60)
-            elif action_str == "restart(checkout_cart)":
-                if state["overall_cpu_load"] <= 100:
-                    state["services"]["checkout_cart"]["status"] = "online"
+    def _detect_sla_improvement(self, prev_state, new_state) -> bool:
+        required_rules = self.state_data.get("sla_rules", {}).get("required", [])
+        if not required_rules:
+            return False
+            
+        prev_passed = sum(1 for cond in required_rules if self.evaluate_condition(prev_state, cond))
+        new_passed = sum(1 for cond in required_rules if self.evaluate_condition(new_state, cond))
+        
+        return new_passed > prev_passed
 
-        # Security Exfiltration Scenario
-        elif sid == "hard_002_security_data_exfiltration":
-            if action_str == "drop_network_interface(internal_db)":
-                state["internal_db_outbound_connections"] = 0
-            elif action_str == "notify_security_team(severity=critical)":
-                if state.get("internal_db_outbound_connections", 0) == 0:
-                    state["public_api_status"] = "scrubbed_and_stable"
+    def _detect_positive_progress(self, prev_state, new_state) -> str:
+        def extract_values(d, prefix=""):
+            vals = {}
+            for k, v in d.items():
+                full_key = f"{prefix}.{k}" if prefix else k
+                if isinstance(v, dict):
+                    vals.update(extract_values(v, full_key))
+                else:
+                    vals[full_key] = v
+            return vals
 
-        # Cloud Runaway Spend Scenario
-        elif sid == "hard_003_cloud_runaway_spend":
-            if action_str == "freeze_queue(async_batch_queue)":
-                state["async_batch_queue"] = "frozen"
-            elif action_str == "terminate_instances(type=gpu, exclude_tag=production_inference)":
-                state["gpu_nodes_active"] = 10
-                state["hourly_burn_rate"] = "$1,500"
-            elif action_str == "scale_up(core_auth_api, nodes=5)":
-                state["core_auth_api"] = "healthy"
-                state["standard_nodes_active"] = 15
+        prev_vals = extract_values(prev_state)
+        new_vals = extract_values(new_state)
 
-        # Split Brain Database Scenario
-        elif sid == "hard_004_split_brain_database":
-            if action_str == "check_replication_status()":
-                state["replication_lag"] = "verified_broken"
-            elif action_str == "set_db_mode(db_us_east, mode=read_only)":
-                state["db_us_east_status"] = "read_only"
-            elif action_str == "page_network_engineers()":
-                if state.get("db_us_east_status") == "read_only":
-                    state["network_link_us_eu"] = "restored"
-                    state["db_us_east_status"] = "accepting_writes"
+        critical_terms = ["failing", "offline", "dead", "severed"]
+        moderate_terms = ["degraded", "overloaded", "maxed", "dropped", "stalled"]
+        positive_terms = ["online", "healthy", "stable", "complete", "normal", "routed", "restored", "scrubbed_and_stable"]
 
-        # Triage SLA Playbook (Prompt Custom Scenario Support)
-        elif sid == "hard_000_enterprise_sla" or "server_load" in state:
-            if action_str == "shutdown_service(recommendation_engine)":
-                state["recommendation_engine"] = "Offline"
-                state["server_load"] = "110%"
-                state["enterprise_api_status"] = "Stable"
-            elif action_str == "throttle_traffic(free_tier, limit=50%)":
-                state["server_load"] = "80%"
-                state["free_api_status"] = "Stable"
+        improvement = "none"
 
+        for key, new_val in new_vals.items():
+            prev_val = prev_vals.get(key)
+            if prev_val == new_val or prev_val is None:
+                continue
 
-    def _calculate_dynamic_bleed(self, sid, state) -> float:
-        """Calculates dynamic bleed loss strictly based on current state attributes."""
-        bleed = 0.0
+            def parse_num(v):
+                if isinstance(v, (int, float)): return float(v)
+                if isinstance(v, str):
+                    try:
+                        return float(v.replace('%', '').replace('$', '').replace(',', '').strip())
+                    except ValueError:
+                        return None
+                return None
 
-        if sid == "hard_001_ecommerce_black_friday":
-            if state["services"]["payment_gateway"].get("status") in ["failing", "degraded"]:
-                bleed -= 0.20
-            if state["services"]["checkout_cart"].get("status") == "failing":
-                bleed -= 0.15
-            if state.get("overall_cpu_load", 0) > 100:
-                bleed -= 0.05
+            prev_num = parse_num(prev_val)
+            new_num = parse_num(new_val)
 
-        elif sid == "hard_002_security_data_exfiltration":
-            if state.get("public_api_status") == "failing":
-                bleed -= 0.05
-            if state.get("internal_db_outbound_connections", 0) > 0:
-                bleed -= 0.30
+            if prev_num is not None and new_num is not None:
+                if new_num < prev_num:
+                    improvement = "moderate"
 
-        elif sid == "hard_003_cloud_runaway_spend":
-            burn_rate_str = str(state.get("hourly_burn_rate", "$0")).replace("$", "").replace(",", "")
-            burn_rate = int(burn_rate_str)
-            if burn_rate > 2000:
-                bleed -= 0.15
-            if state.get("core_auth_api") == "throttling":
-                bleed -= 0.10
+            if isinstance(prev_val, str) and isinstance(new_val, str):
+                prev_str = prev_val.lower()
+                new_str = new_val.lower()
 
-        elif sid == "hard_004_split_brain_database":
-            # Active Split Brain is disastrous
-            if state.get("db_us_east_status") == "accepting_writes" and state.get("db_eu_west_status") == "accepting_writes":
-                if state.get("network_link_us_eu") == "severed":
-                    bleed -= 0.25
-            # US East offline/read-only has a small continuous business cost until network restores
-            if state.get("db_us_east_status") == "read_only" and state.get("network_link_us_eu") == "severed":
-                bleed -= 0.05
+                was_critical = any(t in prev_str for t in critical_terms)
+                is_critical_now = any(t in new_str for t in critical_terms)
                 
-        # Triage SLA Playbook (Prompt Custom Scenario Support)
-        elif sid == "hard_000_enterprise_sla" or "server_load" in state:
-            if state.get("enterprise_api_status") == "Failing":
-                bleed -= 0.10
-            if state.get("free_api_status") == "Failing":
-                bleed -= 0.01
+                was_moderate = any(t in prev_str for t in moderate_terms)
+                is_moderate_now = any(t in new_str for t in moderate_terms)
+                
+                is_good_now = any(t in new_str for t in positive_terms)
 
+                if (was_critical and not is_critical_now):
+                    return "critical"
+                elif (was_moderate and not is_moderate_now) or (not was_moderate and is_good_now and not was_critical):
+                    if improvement != "critical":
+                        improvement = "moderate"
+                elif is_good_now and not was_critical and not was_moderate:
+                     if improvement == "none":
+                         improvement = "minor"
+
+        return improvement
+
+    def evaluate_condition(self, state, condition_string):
+        if not condition_string:
+            return True
+            
+        if " OR " in condition_string:
+            return any(self.evaluate_condition(state, c.strip()) for c in condition_string.split(" OR "))
+        if " AND " in condition_string:
+            return all(self.evaluate_condition(state, c.strip()) for c in condition_string.split(" AND "))
+
+        match = re.match(r"([\w\.]+)\s*(==|!=|<=|>=|<|>|IN)\s*(.+)", condition_string)
+        if not match:
+            if condition_string.strip() == "1 == 1":
+                return True
+            return True
+            
+        key, op, val_str = match.groups()
+        
+        parts = key.split('.')
+        curr = state
+        for p in parts:
+            if isinstance(curr, dict) and p in curr:
+                curr = curr[p]
+            else:
+                curr = None
+                break
+                
+        def parse_numeric(v):
+            if isinstance(v, str):
+                v = v.replace('$', '').replace(',', '').strip("'").strip('"')
+                try:
+                    return float(v)
+                except ValueError:
+                    if v.lower() == 'true': return True
+                    if v.lower() == 'false': return False
+                    return v
+            return v
+
+        curr_val = parse_numeric(curr)
+        
+        if curr is None:
+            return False
+            
+        if op == "IN":
+            target_list = [parse_numeric(v.strip().strip("[]'\"")) for v in val_str.split(",")]
+            return curr_val in target_list
+
+        target_val = parse_numeric(val_str)
+
+        if op == "==": return str(curr_val).lower() == str(target_val).lower()
+        if op == "!=": return str(curr_val).lower() != str(target_val).lower()
+        
+        try:
+            curr_f = float(curr_val)
+            target_f = float(target_val)
+            if op == "<=": return curr_f <= target_f
+            if op == ">=": return curr_f >= target_f
+            if op == "<": return curr_f < target_f
+            if op == ">": return curr_f > target_f
+        except:
+            pass
+            
+        return False
+
+    def apply_effects(self, state, effects_dict):
+        if not effects_dict:
+            return
+            
+        for key, effect in effects_dict.items():
+            parts = key.split('.')
+            curr = state
+            for p in parts[:-1]:
+                if p not in curr:
+                    curr[p] = {}
+                curr = curr[p]
+            target_key = parts[-1]
+            
+            if isinstance(effect, str) and effect.startswith("-") and effect[1:].replace('.', '').isdigit():
+                current_val = float(str(curr.get(target_key, 0)).replace('%',''))
+                curr[target_key] = max(0.0, current_val - float(effect[1:]))
+            elif isinstance(effect, str) and effect.startswith("+") and effect[1:].replace('.', '').isdigit():
+                current_val = float(str(curr.get(target_key, 0)).replace('%',''))
+                curr[target_key] = current_val + float(effect[1:])
+            else:
+                curr[target_key] = effect
+
+    def _apply_state_transition(self, state, action_str):
+        rules = self.state_data.get("transition_rules", {})
+        if action_str in rules:
+            rule = rules[action_str]
+            condition = rule.get("condition", "")
+            if self.evaluate_condition(state, condition):
+                self.apply_effects(state, rule.get("effects", {}))
+            else:
+                if "else_effects" in rule:
+                    self.apply_effects(state, rule["else_effects"])
+
+    def _calculate_dynamic_bleed(self, state) -> float:
+        bleed = 0.0
+        for rule in self.state_data.get("bleed_rules", []):
+            if self.evaluate_condition(state, rule.get("condition", "")):
+                bleed += float(rule.get("penalty", 0.0))
         return bleed
+
+    def _check_sla_compliance(self, state) -> str:
+        sla_rules = self.state_data.get("sla_rules", {})
+        forbidden_rules = sla_rules.get("forbidden", [])
+        required_rules = sla_rules.get("required", [])
+
+        for cond in forbidden_rules:
+            if self.evaluate_condition(state, cond):
+                return "FAIL"
+
+        if required_rules:
+            all_passed = all(self.evaluate_condition(state, cond) for cond in required_rules)
+            if all_passed:
+                return "PASS"
+        
+        return "INCOMPLETE"
 
     def state(self):
         return {
