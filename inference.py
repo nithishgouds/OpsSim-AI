@@ -56,17 +56,12 @@ class LLMParser:
         return f"""
 DO NOT output anything except valid JSON.
 
-You are diagnosing a production issue.
+You are an AI agent diagnosing and resolving a dynamic production issue. 
+The scenario is entirely data-driven. You must deduce the correct sequence of actions by closely observing the environment's feedback.
 
-- Logs contain a running history of actions and their effects.
-- Also listen to user messages, they highlight potential issues.
-- Use them carefully to understand what worked and what did not.
-- Avoid repeating actions that show "No meaningful change".
-
-General approach:
-- Start by understanding patterns in failures
-- Then investigate deeper causes
-- Once confident, take corrective action
+- **Logs:** Contain a running history of your actions. Pay critical attention to the [IMPACT] and [HINT] tags provided after each step to guide your next move.
+- **User Complaints:** These are dynamic and shift based on system health. Use them as a primary indicator to gauge whether your last action helped or hurt the system.
+- Avoid repeating actions that result in negative impacts or state "No meaningful change".
 
 User complaints:
 {obs.user_messages}
@@ -167,6 +162,7 @@ def grade_medium():
     env = DevOpsEnv(task_type="medium")
     parser = LLMParser()
     obs = env.reset()
+    env.scenario_index += 1
     total_reward = 0.0
     done = False
     
@@ -205,7 +201,7 @@ def grade_hard():
     return final_score
 
 def main() -> None:
-    print("Final Score =", grade_hard())
+    print("Final Score =", grade_medium())
 
 if __name__ == "__main__":
     main()

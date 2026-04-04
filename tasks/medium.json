@@ -1,119 +1,186 @@
 {
   "medium_tasks_dataset": [
     {
-      "scenario_id": "medium_dyn_002_partial_payment_outage",
-      "domain": "Payment Systems",
-      "description": "Users report intermittent payment failures. System metrics look normal, but certain transactions are silently failing. The agent must diagnose and fix the issue in a few steps while avoiding actions that worsen the system.",
-
+      "scenario_id": "medium_001_hidden_weekend_bug",
+      "domain": "Application Logic",
+      "description": "Users complain about weekend payments, but standard metrics look fine.",
       "initial_state": {
-        "bug_active": true,
-        "service_health": 0.5,
         "pattern_identified": false,
         "root_cause_identified": false,
-        "fix_applied": false
-      },
-
-      "observation": {
-        "user_messages": [
-          "Some payments are failing randomly",
-          "Checkout works sometimes but not always",
-          "This is inconsistent and frustrating"
-        ],
-        "logs": "[INFO] Payment service running\n[INFO] No critical errors detected\n[DEBUG] Transaction success rate: 78%\n[INFO] CPU=35%, error_rate=0.0",
-        "system_metrics": {
-          "cpu": 0.35,
-          "error_rate": 0.0
+        "bug_active": true,
+        "metrics": {
+          "cpu": 0.3,
+          "error_rate": 0.0,
+          "service_health": 0.5
         }
       },
-
-      "action_space": [
+      "initial_logs": "[INFO] System operational. Awaiting diagnosis.",
+      "initial_messages": [
+        "Payments fail on Saturday",
+        "Weekend checkout broken",
+        "Why is it only failing for weekend events?"
+      ],
+      "available_actions": [
         "analyze_failure_pattern",
-        "inspect_transaction_logs",
         "identify_edge_case_condition",
         "apply_transaction_fix",
+        "inspect_transaction_logs",
         "restart_payment_service",
         "do_nothing"
       ],
-
-        "dynamic_rewards": {
-            "pattern_identified": 0.25,
-            "root_cause_identified": 0.4,
-            "bug_fixed": 1.2
-            },
-
-        "dynamic_penalties": {
-            "irrelevant_action": -0.15,
-            "restart_without_diagnosis": -0.4,
-            "random_fix_attempt": -0.3,
-            "repeat_action": -0.2,
-            "no_progress": -0.15
-            },
-
-      "state_transitions": {
+      "repeat_penalty": -0.15,
+      "invalid_action_penalty": -0.2,
+      "step_penalty": -0.03,
+      "transition_rules": {
         "analyze_failure_pattern": {
-          "pattern_identified": true,
-          "service_health_delta": 0.1
-        },
-        "inspect_transaction_logs": {
-          "root_cause_identified": false,
-          "service_health_delta": 0.05
+          "condition": "pattern_identified == false",
+          "effects": {
+            "pattern_identified": true,
+            "metrics.service_health": "+0.1"
+          },
+          "reward": 0.3,
+          "log_impact": "Pattern identified: Failures correlate heavily with weekend timestamps.",
+          "hint": "Investigate logs deeper to find the exact edge case condition.",
+          "user_messages": ["Support queue seems slightly better, but some weekend events still failing."],
+          "else_reward": -0.2,
+          "else_log_impact": "No new patterns found.",
+          "else_hint": "You already found the pattern. Move on to root cause analysis."
         },
         "identify_edge_case_condition": {
-          "root_cause_identified": true,
-          "service_health_delta": 0.15
+          "condition": "pattern_identified == true AND root_cause_identified == false",
+          "effects": {
+            "root_cause_identified": true,
+            "metrics.service_health": "+0.15"
+          },
+          "reward": 0.4,
+          "log_impact": "Root cause found: leap-year/weekend logic flaw in date parser.",
+          "hint": "A fix is now possible. Apply the patch.",
+          "user_messages": ["Wait, I think the errors stopped increasing."],
+          "else_reward": -0.2,
+          "else_log_impact": "Cannot identify edge case yet.",
+          "else_hint": "You need to analyze the failure pattern first, or you've already found it."
         },
         "apply_transaction_fix": {
-          "bug_active": false,
-          "fix_applied": true,
-          "service_health_delta": 0.3
+          "condition": "root_cause_identified == true AND bug_active == true",
+          "effects": {
+            "bug_active": false,
+            "metrics.service_health": "+0.3"
+          },
+          "reward": 1.0,
+          "log_impact": "Hotfix deployed successfully. Bug resolved.",
+          "hint": "System stable.",
+          "user_messages": ["Everything is working perfectly now! Thanks!"],
+          "else_reward": -0.3,
+          "else_log_impact": "Fix failed to apply.",
+          "else_hint": "You must identify the root cause before blindly applying a fix."
         },
-
+        "inspect_transaction_logs": {
+          "condition": "root_cause_identified == false",
+          "effects": {
+            "metrics.service_health": "+0.05"
+          },
+          "reward": -0.02,
+          "log_impact": "Reviewed transaction logs. Some date parsing anomalies detected.",
+          "hint": "Logs show anomalies. Try to identify the specific edge case condition.",
+          "else_reward": -0.1,
+          "else_log_impact": "Reviewed logs again. Nothing new.",
+          "else_hint": "You already have the root cause. Stop reading logs."
+        },
         "restart_payment_service": {
-          "service_health_delta": -0.2
-        },
-        "do_nothing": {
-          "service_health_delta": -0.1
+          "condition": "true",
+          "effects": {
+            "metrics.service_health": "-0.2"
+          },
+          "reward": -0.5,
+          "log_impact": "Service restarted.",
+          "hint": "Restarting without diagnosing did not help. The logic bug remains.",
+          "user_messages": ["The system went down for a minute, and the weekend bug is STILL there!"]
         }
       },
-
-      "log_templates": {
-        "analyze_failure_pattern": "[DEBUG] Failure pattern detected: transactions failing when amount > threshold\n[INFO] Pattern correlation identified",
-
-        "inspect_transaction_logs": "[TRACE] Inspecting transaction logs\n[WARNING] Some transactions missing validation checks",
-
-        "identify_edge_case_condition": "[ERROR] Root cause found: edge-case condition skips validation for certain transactions\n[INFO] Bug confirmed in transaction handler",
-
-        "apply_transaction_fix": "[INFO] Patch applied to transaction handler\n[DEBUG] Validation enforced for all cases\n[INFO] Transaction success rate improving",
-
-        "restart_payment_service": "[INFO] Restarting payment service...\n[WARNING] Issue persists after restart\n[ERROR] Transaction failures continue",
-
-        "do_nothing": "[WARNING] No action taken\n[ERROR] Transaction failures increasing",
-
-        "degradation": "[ERROR] System stability degrading\n[DEBUG] Transaction success rate dropping",
-
-        "improvement": "[INFO] System stability improving\n[DEBUG] Transaction success rate increasing"
+      "success_condition": [
+        "bug_active == false"
+      ]
+    },
+    {
+      "scenario_id": "medium_002_pdf_memory_leak",
+      "domain": "Performance Engineering",
+      "description": "Users complain the app becomes unresponsive when they export large reports.",
+      "initial_state": {
+        "memory_profiled": false,
+        "leak_source_found": false,
+        "leak_active": true,
+        "metrics": {
+          "cpu": 0.4,
+          "memory_usage": 0.95,
+          "service_health": 0.4
+        }
       },
-
-      "user_message_updates": {
-        "improve": [
-          "Seems slightly better now",
-          "Fewer failures, but still not perfect"
-        ],
-        "degrade": [
-          "This is getting worse",
-          "Now almost all payments are failing",
-          "System is unreliable"
-        ],
-        "fixed": [
-          "Payments working perfectly now",
-          "Issue resolved, everything is smooth"
-        ]
+      "initial_logs": "[WARN] Memory usage critically high. App performance degraded.",
+      "initial_messages": [
+        "The site freezes completely when I click 'Export to PDF'.",
+        "It was fine this morning, now it's unusable.",
+        "Takes 5 minutes to load the dashboard!"
+      ],
+      "available_actions": [
+        "check_monitoring_dashboards",
+        "profile_memory_allocation",
+        "patch_pdf_exporter_leak",
+        "restart_app_servers",
+        "do_nothing"
+      ],
+      "repeat_penalty": -0.1,
+      "invalid_action_penalty": -0.2,
+      "step_penalty": -0.02,
+      "transition_rules": {
+        "check_monitoring_dashboards": {
+          "condition": "true",
+          "reward": 0.1,
+          "log_impact": "Dashboard shows massive memory spikes correlating with PDF export requests.",
+          "hint": "You need to profile the memory to see exactly what object is leaking."
+        },
+        "profile_memory_allocation": {
+          "condition": "memory_profiled == false",
+          "effects": {
+            "memory_profiled": true,
+            "leak_source_found": true
+          },
+          "reward": 0.4,
+          "log_impact": "Heap dump analyzed. 'PDFRenderer' objects are never being garbage collected.",
+          "hint": "The leak source is found. You can now patch the exporter.",
+          "user_messages": ["Seems a bit faster right now, maybe people stopped exporting?"],
+          "else_reward": -0.1,
+          "else_log_impact": "Memory already profiled.",
+          "else_hint": "Apply the patch, you know what the issue is."
+        },
+        "patch_pdf_exporter_leak": {
+          "condition": "leak_source_found == true AND leak_active == true",
+          "effects": {
+            "leak_active": false,
+            "metrics.memory_usage": 0.3,
+            "metrics.service_health": 1.0
+          },
+          "reward": 1.0,
+          "log_impact": "PDF Exporter patched. Garbage collection is now clearing the renderer objects.",
+          "hint": "System stable.",
+          "user_messages": ["Exporting works instantly now, and the site is super fast. Great job!"],
+          "else_reward": -0.4,
+          "else_log_impact": "Patch failed.",
+          "else_hint": "You can't patch what you haven't identified. Profile the memory first."
+        },
+        "restart_app_servers": {
+          "condition": "true",
+          "effects": {
+            "metrics.memory_usage": 0.4,
+            "metrics.service_health": "+0.1"
+          },
+          "reward": -0.2,
+          "log_impact": "Servers restarted. Memory temporarily cleared.",
+          "hint": "Restarting clears the memory temporarily, but the leak will return. Find the root cause.",
+          "user_messages": ["It's fast again! Wait, no, it's slowing down already..."]
+        }
       },
-
-      "optimal_solution_path": [
-        "analyze_failure_pattern",
-        "identify_edge_case_condition",
-        "apply_transaction_fix"
+      "success_condition": [
+        "leak_active == false"
       ]
     }
   ]
