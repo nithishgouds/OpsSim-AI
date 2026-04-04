@@ -10,6 +10,7 @@ load_dotenv()
 API_BASE_URL = os.getenv("API_BASE_URL")
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 MODEL_NAME = os.getenv("MODEL_NAME")
+MAX_STEPS = 8
 
 client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
@@ -53,6 +54,8 @@ class LLMParser:
 
     def _build_medium_prompt(self, obs):
         return f"""
+DO NOT output anything except valid JSON.
+
 You are diagnosing a production issue.
 
 - Logs contain a running history of actions and their effects.
@@ -144,7 +147,7 @@ Return ONLY JSON:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
+                temperature=0,
                 max_tokens=150
             )
             return response.choices[0].message.content or ""
@@ -161,70 +164,48 @@ Return ONLY JSON:
         }, sort_keys=True)
 
 def grade_medium():
-
     env = DevOpsEnv(task_type="medium")
     parser = LLMParser()
-
     obs = env.reset()
     total_reward = 0.0
     done = False
-
-    print("[START] medium")
-
+    
     while not done:
         action_str, _, _ = parser.parse(obs)
         obs, reward, done, _ = env.step(Action(action_type=action_str))
-
         total_reward += reward
 
-        print(f"[STEP] {obs.step_count} | {action_str} | {reward:+.2f}")
-
-    min_r = -3.0
-    max_r = 2.0
-
-    score = (total_reward - min_r) / (max_r - min_r)
-    score = max(0, min(1, score))
-
-    print(f"[END] reward={total_reward:.2f} score={score:.2f}")
-
+    score = max(0, min(1, (total_reward - -3.0) / (2.0 - -3.0)))
     return score
 
-
 def grade_hard():
-    env = DevOpsEnv(task_type="hard", seed=None)
+    env = DevOpsEnv(task_type="hard", seed=42)
     parser = LLMParser()
-    
     obs = env.reset()
     total_reward = 0.0
     done = False
     
-    print("Starting Inference on HARD Task...")
-    
-    while not done:
+    for step in range(MAX_STEPS):
         action_str, confidence, target = parser.parse(obs)
-        action = Action(action_type=action_str, target=target)
         
+        if action_str not in obs.available_actions:
+            action_str = "do_nothing"
+            target = None
+
+        action = Action(action_type=action_str, target=target)
         obs, reward, done, info = env.step(action)
         total_reward += reward
-        
-        print(f"Step {obs.step_count}: Action: {action_str} | Reward: {reward:+.2f}")
-        
         if done:
-            print("Episode complete.")
-            if "reason" in info:
-                print(f"Termination Reason: {info['reason']}")
             break
 
     min_reward = -5.0
     max_reward = 1.0
     final_score = (total_reward - min_reward) / (max_reward - min_reward)
     final_score = max(0.0, min(1.0, final_score))
-
-    print(f"Total Reward: {total_reward:+.2f}")
-    print(f"Final Score: {final_score:.4f}")
+    return final_score
 
 def main() -> None:
-    print("Final Score = ",grade_medium())
+    print("Final Score =", grade_hard())
 
 if __name__ == "__main__":
     main()
