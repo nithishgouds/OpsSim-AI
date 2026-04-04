@@ -180,7 +180,7 @@ class DevOpsEnv:
         if self.step_count >= self.max_steps:
             done = True
         
-        print(action," -- ", reward)
+        # print(action," -- ", reward)
 
         return Observation(
             task_type="medium",

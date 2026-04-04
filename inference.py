@@ -157,39 +157,54 @@ Return ONLY JSON:
             "state": getattr(obs, "system_state", None)
         }, sort_keys=True)
 
-def grade_medium():
-    num_scenarios = 3
+def grade_medium(num_scenarios = 1):
     total_score = 0.0
     
-    # Initialize env and parser once
     env = DevOpsEnv(task_type="medium")
     parser = LLMParser()
-
     
     for i in range(num_scenarios):
         obs = env.reset()
         total_reward = 0.0
         done = False
+        rewards_list = []
         
-        # Use MAX_STEPS to prevent infinite loops if the agent gets stuck
+        # [START] line at episode begin [cite: 28, 29]
+        print(f"[START] task=medium_scenario_{i+1} env=ops-sim model={MODEL_NAME}")
+        
         for step in range(MAX_STEPS):
-            action_str, _, _ = parser.parse(obs)
+            action_str, _, target = parser.parse(obs)
             
-            obs, reward, done, _ = env.step(Action(action_type=action_str))
+            # Basic validation for error reporting 
+            error_msg = "null"
+            if action_str not in obs.available_actions:
+                error_msg = f"invalid_action_{action_str}"
+                action_str = "do_nothing"
+
+            obs, reward, done, info = env.step(Action(action_type=action_str, target=target))
             total_reward += reward
+            rewards_list.append(f"{reward:.2f}")
+
+            # [STEP] line immediately after env.step() [cite: 28, 29]
+            # Ensure lowercase booleans and 2f reward formatting 
+            print(f"[STEP] step={step+1} action={action_str} reward={reward:.2f} done={str(done).lower()} error={error_msg}")
             
             if done:
                 break
 
-        # Normalize the score for this specific scenario
+        # Calculate success for the [END] line [cite: 30]
+        # Success is typically true if the bug was resolved (done) and reward is positive
+        success = "true" if (done and total_reward > 0) else "false"
+        rewards_str = ",".join(rewards_list)
+
+        # [END] line after episode completion [cite: 28, 30]
+        print(f"[END] success={success} steps={len(rewards_list)} rewards={rewards_str}")
+
+        # Internal scoring logic for your own tracking
         scenario_score = max(0.0, min(1.0, (total_reward - -3.0) / (2.0 - -3.0)))
-        print(f"Medium Scenario {i+1} Score: {scenario_score:.2f} | Total Reward: {total_reward:.2f}")
-        
         total_score += scenario_score
 
-    # Return the average score across all 3 scenarios
-    average_score = total_score / num_scenarios
-    return average_score
+    return total_score / num_scenarios
 
 def grade_hard():
     env = DevOpsEnv(task_type="hard", seed=42)
