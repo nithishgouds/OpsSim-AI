@@ -20,7 +20,7 @@ class LLMParser:
         self.model = MODEL_NAME
         self.cache = {}
 
-    def parse(self, observation):
+    def parse(self, observation, action_history):
         key = self._build_cache_key(observation)
         if key in self.cache:
             return self.cache[key]
@@ -30,9 +30,10 @@ class LLMParser:
         elif observation.task_type == "medium":
             result = self._parse_medium(observation)
         else:
-            result = self._parse_hard(observation)
+            result = self._parse_hard(observation, action_history)
 
-        self.cache[key] = result
+        if result[0] in observation.available_actions and result[0] != "do_nothing" and result[0]:
+             self.cache[key] = result
         return result
 
     def _parse_easy(self, obs):
@@ -48,7 +49,6 @@ class LLMParser:
 
     def _parse_medium(self, obs):
         prompt = self._build_medium_prompt(obs)
-        # print("="*50,"\nPrompt:\n",prompt)
         response = self._call_llm(prompt)
         return self._parse_medium_response(response, obs)
 
@@ -90,16 +90,31 @@ Return ONLY JSON:
         except Exception:
             return "do_nothing", 0.3, None
 
-    def _parse_hard(self, obs):
-        prompt = self._build_hard_prompt(obs)
+    def _parse_hard(self, obs, action_history):
+        prompt = self._build_hard_prompt(obs, action_history)
         response = self._call_llm(prompt)
         return self._parse_hard_response(response, obs)
 
-    def _build_hard_prompt(self, obs):
+    def _build_hard_prompt(self, obs, action_history):
+        history_str = "\n".join([f"{i+1}. {act}" for i, act in enumerate(action_history)]) if action_history else "None"
+        
         return f"""
 DO NOT output anything except valid JSON.
 
 You are managing a catastrophic system failure. You must follow the SLA Playbook rules exactly.
+
+IMPORTANT RULES:
+- Do NOT repeat actions that resulted in negative reward.
+- Avoid "do_nothing" unless absolutely necessary.
+- If an action caused no improvement, try a different strategy.
+- Always aim to reduce system failure quickly.
+- Choose ONLY from Available Actions.
+- Do NOT hallucinate new actions.
+
+Goal:
+- Minimize total penalty
+- Follow SLA rules strictly
+- Stabilize system as fast as possible
 
 Playbook:
 {obs.playbook_text}
@@ -107,16 +122,16 @@ Playbook:
 System State:
 {json.dumps(obs.system_state, indent=2)}
 
-Logs:
+Logs (Previous Steps Details):
 {obs.logs}
+
+Previous Actions Taken:
+{history_str}
 
 Available Actions:
 {json.dumps(obs.available_actions)}
 
 Step Count: {obs.step_count}
-
-Goal: Choose the exact string from Available Actions to execute next. 
-Do not hallucinate actions.
 
 Return ONLY JSON:
 {{
@@ -129,19 +144,24 @@ Return ONLY JSON:
     def _parse_hard_response(self, text, obs):
         try:
             data = json.loads(text)
-            action = data.get("action", "do_nothing")
+            action = data.get("action", "")
             target = data.get("target", None)
             confidence = max(0.0, min(1.0, float(data.get("confidence", 0.5))))
+            
+            if not action:
+                 return sorted(obs.available_actions)[0], 0.0, None
+            
             return action, confidence, target
         except Exception:
-            return "do_nothing", 0.0, None
+            return sorted(obs.available_actions)[0], 0.0, None
 
     def _call_llm(self, prompt):
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0,
+                temperature=0.0,
+                top_p=1.0,
                 max_tokens=150
             )
             return response.choices[0].message.content or ""
@@ -149,13 +169,20 @@ Return ONLY JSON:
             return ""
 
     def _build_cache_key(self, obs):
-        return json.dumps({
-            "task": obs.task_type,
-            "messages": getattr(obs, "user_messages", None),
-            "logs": getattr(obs, "logs", ""),
-            "metrics": getattr(obs, "system_metrics", None),
-            "state": getattr(obs, "system_state", None)
-        }, sort_keys=True)
+        if obs.task_type == "hard":
+            return json.dumps({
+                "state": obs.system_state,
+                "step": obs.step_count,
+                "actions": obs.available_actions
+            }, sort_keys=True)
+        else:
+            return json.dumps({
+                "task": obs.task_type,
+                "messages": getattr(obs, "user_messages", None),
+                "logs": getattr(obs, "logs", ""),
+                "metrics": getattr(obs, "system_metrics", None),
+                "state": getattr(obs, "system_state", None)
+            }, sort_keys=True)
 
 def grade_medium(num_scenarios = 1):
     total_score = 0.0
@@ -206,6 +233,35 @@ def grade_medium(num_scenarios = 1):
 
     return total_score / num_scenarios
 
+def _calculate_dynamic_min_reward(env: DevOpsEnv, max_steps: int) -> float:
+    worst_bleed_per_step = 0.0
+    for rule in env.state_data.get("bleed_rules", []):
+        penalty = rule.get("penalty", 0.0)
+        if penalty < 0:
+            worst_bleed_per_step += penalty
+            
+    worst_invalid_action_penalty = -0.2
+    worst_do_nothing_penalty = -0.3
+    worst_urgency_penalty = -0.05
+    
+    worst_action_penalty_per_step = worst_invalid_action_penalty + worst_do_nothing_penalty
+    
+    n = max_steps
+    worst_repeat_penalty_total = -0.15 * (n * (n - 1) / 2)
+    worst_repeat_penalty_per_step = worst_repeat_penalty_total / max_steps
+    
+    worst_case_per_step = (
+        worst_bleed_per_step 
+        + worst_action_penalty_per_step 
+        + worst_urgency_penalty 
+        + worst_repeat_penalty_per_step
+    )
+    
+    sla_violation_penalty = env.state_data.get("sla_violation_penalty", -1.0)
+    
+    min_reward = (max_steps * worst_case_per_step) + sla_violation_penalty
+    return min_reward
+
 def grade_hard():
     env = DevOpsEnv(task_type="hard", seed=42)
     parser = LLMParser()
@@ -213,23 +269,31 @@ def grade_hard():
     total_reward = 0.0
     done = False
     
+    min_reward = _calculate_dynamic_min_reward(env, MAX_STEPS)
+    max_reward = 1.0
+    
+    action_history = []
+    
+    print("[START] hard")
     for step in range(MAX_STEPS):
-        action_str, confidence, target = parser.parse(obs)
-        
-        if action_str not in obs.available_actions:
-            action_str = "do_nothing"
-            target = None
-
+        action_str, confidence, target = parser.parse(obs, action_history)
         action = Action(action_type=action_str, target=target)
+        
         obs, reward, done, info = env.step(action)
         total_reward += reward
+        
+        log_action = f"{action_str}({target})" if target else action_str
+        action_history.append(log_action)
+        
+        print(f"[STEP] {obs.step_count} | {log_action} | {reward:+.2f}")
+        
         if done:
             break
 
-    min_reward = -5.0
-    max_reward = 1.0
     final_score = (total_reward - min_reward) / (max_reward - min_reward)
     final_score = max(0.0, min(1.0, final_score))
+    
+    print(f"[END] reward={total_reward:.2f} score={final_score:.2f}")
     return final_score
 
 def main() -> None:
