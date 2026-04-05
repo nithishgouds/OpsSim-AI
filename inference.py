@@ -354,31 +354,39 @@ def grade_hard():
     max_reward = 1.0
     
     action_history = []
+    rewards_list = []
     
-    print("[START] hard")
+    print(f"[START] task=hard_catastrophic_failure env=ops-sim model={MODEL_NAME}")
+    
     for step in range(MAX_STEPS):
         action_str, confidence, target = parser.parse(obs, action_history)
         action = Action(action_type=action_str, target=target)
         
         obs, reward, done, info = env.step(action)
         total_reward += reward
+        rewards_list.append(reward)
         
         log_action = f"{action_str}({target})" if target else action_str
         action_history.append(log_action)
         
-        print(f"[STEP] {obs.step_count} | {log_action} | {reward:+.2f}")
+        print(f"[STEP] step={step+1} action={log_action} reward={reward:.2f} done={str(done).lower()} error=null")
         
         if done:
             break
 
+    success = "true" if (done and total_reward > 0) else "false"
+    rewards_str = ",".join([f"{r:.2f}" for r in rewards_list])
+    
+    print(f"[END] success={success} steps={len(rewards_list)} rewards={rewards_str}")
+
+    # Normalize the score using the dynamic minimum reward
     final_score = (total_reward - min_reward) / (max_reward - min_reward)
     final_score = max(0.0, min(1.0, final_score))
     
-    print(f"[END] reward={total_reward:.2f} score={final_score:.2f}")
     return final_score
 
 def main() -> None:
-    print("Final Score =", grade_easy())
+    print("Final Score =", grade_hard())
 
 if __name__ == "__main__":
     main()
