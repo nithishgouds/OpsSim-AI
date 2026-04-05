@@ -41,11 +41,43 @@ class LLMParser:
         response = self._call_llm(prompt)
         return self._parse_easy_response(response, obs)
 
-    def _build_easy_prompt(self, obs):
-        return ""
+    def _build_easy_prompt(self, obs) -> str:
+        return f"""
+DO NOT output anything except valid JSON.
+
+You are an automated DevOps recovery agent. Your objective is to resolve a system alert by executing a single configuration fix.
+
+1. Analyze the panicked user message and the specific error logs.
+2. Review the current config state.
+3. Identify and execute the single correct configuration action that resolves the root cause.
+4. BEWARE of "red herring" actions: The user might blame the wrong system (e.g., UI changes) when the logs indicate a deeper infrastructure failure.
+
+User Message: "{obs.user_message}"
+Logs: {obs.logs}
+
+Current Config State:
+{json.dumps(obs.config, indent=2)}
+
+Available Actions:
+{json.dumps(obs.available_actions)}
+
+Return ONLY JSON:
+{{
+  "action": "<exact_string_from_available_actions>"
+}}
+"""
 
     def _parse_easy_response(self, text, obs):
-        return "do_nothing", 0.0, None
+        try:
+            data = json.loads(text)
+            action = data.get("action", "")
+            
+            if action not in obs.available_actions:
+                action = "do_nothing"
+                
+            return action, 1.0, None
+        except Exception:
+            return "do_nothing", 0.0, None
 
     def _parse_medium(self, obs):
         prompt = self._build_medium_prompt(obs)
@@ -183,6 +215,52 @@ Return ONLY JSON:
                 "metrics": getattr(obs, "system_metrics", None),
                 "state": getattr(obs, "system_state", None)
             }, sort_keys=True)
+        
+def grade_easy(num_scenarios=1):
+    total_score = 0.0
+    
+    env = DevOpsEnv(task_type="easy")
+    parser = LLMParser()
+    
+    for i in range(num_scenarios):
+        obs = env.reset()
+        total_reward = 0.0
+        done = False
+        rewards_list = []
+        action_history = [] 
+        
+        print(f"[START] task=easy_scenario_{i+1} env=ops-sim model={MODEL_NAME}")
+        
+        for step in range(MAX_STEPS):
+            action_str, _, target = parser.parse(obs, action_history)
+            
+            error_msg = "null"
+            if action_str not in obs.available_actions:
+                error_msg = f"invalid_action_{action_str}"
+                action_str = "do_nothing"
+
+            obs, reward, done, info = env.step(Action(action_type=action_str, target=target))
+            
+            log_action = f"{action_str}({target})" if target else action_str
+            action_history.append(log_action)
+            
+            total_reward += reward
+            rewards_list.append(f"{reward:.2f}")
+
+            print(f"[STEP] step={step+1} action={action_str} reward={reward:.2f} done={str(done).lower()} error={error_msg}")
+            
+            if done:
+                break
+
+        success = "true" if (done and total_reward > 0) else "false"
+        rewards_str = ",".join(rewards_list)
+
+        print(f"[END] success={success} steps={len(rewards_list)} rewards={rewards_str}")
+
+        scenario_score = max(0.0, min(1.0, (total_reward - -1.6) / (1.0 - -1.6)))
+        total_score += scenario_score
+
+    return total_score / num_scenarios
 
 def grade_medium(num_scenarios = 1):
     total_score = 0.0
@@ -195,39 +273,42 @@ def grade_medium(num_scenarios = 1):
         total_reward = 0.0
         done = False
         rewards_list = []
+        # Add action_history to match the new parse method signature
+        action_history = [] 
         
-        # [START] line at episode begin [cite: 28, 29]
+        # [START] line at episode begin [cite: 28]
         print(f"[START] task=medium_scenario_{i+1} env=ops-sim model={MODEL_NAME}")
         
         for step in range(MAX_STEPS):
-            action_str, _, target = parser.parse(obs)
+            # Pass action_history here to fix the error
+            action_str, _, target = parser.parse(obs, action_history)
             
-            # Basic validation for error reporting 
             error_msg = "null"
             if action_str not in obs.available_actions:
                 error_msg = f"invalid_action_{action_str}"
                 action_str = "do_nothing"
 
             obs, reward, done, info = env.step(Action(action_type=action_str, target=target))
+            
+            # Update history so the LLM can see its progress in the next step
+            log_action = f"{action_str}({target})" if target else action_str
+            action_history.append(log_action)
+            
             total_reward += reward
             rewards_list.append(f"{reward:.2f}")
 
-            # [STEP] line immediately after env.step() [cite: 28, 29]
-            # Ensure lowercase booleans and 2f reward formatting 
+            # [STEP] line immediately after env.step() [cite: 29, 31]
             print(f"[STEP] step={step+1} action={action_str} reward={reward:.2f} done={str(done).lower()} error={error_msg}")
             
             if done:
                 break
 
-        # Calculate success for the [END] line [cite: 30]
-        # Success is typically true if the bug was resolved (done) and reward is positive
-        success = "true" if (done and total_reward > 0) else "false"
+        success = "true" if (done and total_reward > 0) else "false" [cite: 31]
         rewards_str = ",".join(rewards_list)
 
-        # [END] line after episode completion [cite: 28, 30]
+        # [END] line after episode completion [cite: 30]
         print(f"[END] success={success} steps={len(rewards_list)} rewards={rewards_str}")
 
-        # Internal scoring logic for your own tracking
         scenario_score = max(0.0, min(1.0, (total_reward - -3.0) / (2.0 - -3.0)))
         total_score += scenario_score
 
@@ -273,31 +354,39 @@ def grade_hard():
     max_reward = 1.0
     
     action_history = []
+    rewards_list = []
     
-    print("[START] hard")
+    print(f"[START] task=hard_catastrophic_failure env=ops-sim model={MODEL_NAME}")
+    
     for step in range(MAX_STEPS):
         action_str, confidence, target = parser.parse(obs, action_history)
         action = Action(action_type=action_str, target=target)
         
         obs, reward, done, info = env.step(action)
         total_reward += reward
+        rewards_list.append(reward)
         
         log_action = f"{action_str}({target})" if target else action_str
         action_history.append(log_action)
         
-        print(f"[STEP] {obs.step_count} | {log_action} | {reward:+.2f}")
+        print(f"[STEP] step={step+1} action={log_action} reward={reward:.2f} done={str(done).lower()} error=null")
         
         if done:
             break
 
+    success = "true" if (done and total_reward > 0) else "false"
+    rewards_str = ",".join([f"{r:.2f}" for r in rewards_list])
+    
+    print(f"[END] success={success} steps={len(rewards_list)} rewards={rewards_str}")
+
+    # Normalize the score using the dynamic minimum reward
     final_score = (total_reward - min_reward) / (max_reward - min_reward)
     final_score = max(0.0, min(1.0, final_score))
     
-    print(f"[END] reward={total_reward:.2f} score={final_score:.2f}")
     return final_score
 
 def main() -> None:
-    print("Final Score =", grade_medium())
+    print("Final Score =", grade_hard())
 
 if __name__ == "__main__":
     main()

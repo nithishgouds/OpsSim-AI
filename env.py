@@ -5,6 +5,9 @@ import re
 from models import Observation, Action
 
 class DevOpsEnv:
+
+    _DATA_CACHE = {}
+
     def __init__(self, seed=42, max_steps=8, task_type="hard"):
         self.rng = random.Random(seed)
         self.max_steps = max_steps
@@ -12,6 +15,12 @@ class DevOpsEnv:
         self.scenario_index = 0
         self.state_data = {}
         self.observation = None
+
+        if "easy" not in DevOpsEnv._DATA_CACHE and task_type == "easy":
+            dataset_path = os.path.join("tasks", "easy.json")
+            if os.path.exists(dataset_path):
+                with open(dataset_path, "r") as f:
+                    DevOpsEnv._DATA_CACHE["easy"] = json.load(f)["easy_tasks_dataset"]
 
     def reset(self) -> Observation:
         self.step_count = 0
@@ -23,8 +32,32 @@ class DevOpsEnv:
         else:
             return self._reset_hard()
 
-    def _reset_easy(self):
-        return None
+    def _reset_easy(self) -> Observation:
+        self.step_count = 0
+        
+        dataset = DevOpsEnv._DATA_CACHE.get("easy", [])
+        scenario = dataset[self.scenario_index % len(dataset)]
+        self.scenario_index += 1
+
+        self.state_data = {
+            "config": scenario["initial_state"].copy(),
+            "correct_action": scenario["correct_action"],
+            "red_herrings": scenario.get("red_herrings", {}),
+            "available_actions": scenario["available_actions"],
+            "user_message": scenario["observation"]["user_message"],
+            "logs": scenario["observation"]["logs"],
+            "discovered_herrings": set() # Initialize discovery tracking
+        }
+
+        self.observation = Observation(
+            task_type="easy",
+            user_message=self.state_data["user_message"],
+            logs=self.state_data["logs"],
+            config=self.state_data["config"],
+            available_actions=self.state_data["available_actions"],
+            step_count=self.step_count
+        )
+        return self.observation
 
     def _reset_medium(self):
         self.step_count = 0
@@ -110,8 +143,55 @@ class DevOpsEnv:
 
         return obs, reward, done, info
 
-    def _step_easy(self, action):
-        return None, 0.0, False, {}
+    def _step_easy(self, action: Action):
+        reward = -0.05  # Standard step penalty for speed
+        done = False
+        action_str = action.action_type
+
+        # 1. Invalid Action
+        if action_str not in self.state_data["available_actions"] and action_str != "do_nothing":
+            reward -= 0.2
+            self.state_data["logs"] = f"[ERROR] Action '{action_str}' is invalid."
+            
+        # 2. Correct Action
+        elif action_str == self.state_data["correct_action"]:
+            reward += 1.0
+            done = True
+            self.state_data["logs"] = f"[SUCCESS] Executed {action_str}. Configuration resolved."
+            for key in self.state_data["config"]:
+                self.state_data["config"][key] = "resolved"
+                
+        # 3. Red Herring Action (Discovery Economy)
+        elif action_str in self.state_data["red_herrings"]:
+            if action_str not in self.state_data["discovered_herrings"]:
+                # First time discovery
+                reward += 0.2
+                self.state_data["discovered_herrings"].add(action_str)
+            else:
+                # Stupidity Penalty for repeating a known bad action
+                reward -= 0.4
+            
+            # Surface the impact, but NO numerical reward leakage
+            self.state_data["logs"] = self.state_data["red_herrings"][action_str]
+            
+        # 4. Do Nothing
+        elif action_str == "do_nothing":
+            reward -= 0.1
+            self.state_data["logs"] = "[INFO] No action taken. The system remains broken."
+
+        if self.step_count >= self.max_steps:
+            done = True
+
+        self.observation = Observation(
+            task_type="easy",
+            user_message=self.state_data["user_message"],
+            logs=self.state_data["logs"],
+            config=self.state_data["config"],
+            available_actions=self.state_data["available_actions"],
+            step_count=self.step_count
+        )
+        
+        return self.observation, reward, done, {}
 
     def _step_medium(self, action: Action):
         action_str = action.action_type
