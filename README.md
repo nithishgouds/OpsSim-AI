@@ -175,6 +175,148 @@ This design is realistic because it mirrors how production incidents actually un
 
 The result is a reward function that does more than score correctness. It evaluates operational judgment.
 
+### Easy Task Reward Design
+
+The `easy` task is intentionally simple in structure, but not trivial in behavior. Its reward design is built around the idea of **fast and correct configuration recovery**.
+
+At this level, the environment rewards the agent for identifying the single action that truly resolves the issue. The goal is not to blindly explore every option. The goal is to read the user message, connect it to the logs, and act with precision.
+
+The reward behaves like a lightweight operational signal:
+- every step carries a small cost, because even simple incidents become more expensive when they drag on
+- invalid actions are penalized, because random guessing is not real diagnosis
+- the correct action receives a strong positive reward and ends the episode
+- misleading but plausible actions can still produce useful learning signal through red-herring handling
+- repeating a known bad path becomes more costly than the first mistake
+
+In plain terms, the `easy` reward function teaches the agent one important habit: **do not confuse motion with progress**.
+
+Why this matters:
+- many real incidents begin with something that looks obvious
+- engineers often lose time following the wrong symptom
+- the best response is not more action, but the right action
+
+So even though the task is easier, the reward design still captures a realistic principle: speed matters, but precision matters more.
+
+### Medium Task Reward Design
+
+The `medium` task introduces a more subtle reality: systems may appear healthy while users are still failing.
+
+Here, the reward function is designed around **structured diagnosis under uncertainty**.
+
+The agent is no longer solving a single visible configuration problem. Instead, it must infer a hidden bug from indirect evidence such as user complaints, shifting hints, and the effect of earlier actions. That means the reward design must encourage disciplined reasoning across multiple steps.
+
+The medium reward function does this by combining:
+- a step-based cost that discourages wandering
+- penalties for invalid actions, because careless action selection still has operational cost
+- repeat penalties, because looping on the same action is one of the most common forms of failed diagnosis
+- action-specific rewards from transition rules, so meaningful investigative behavior is recognized
+- completion reward through the successful satisfaction of the scenario's success condition
+
+What makes this powerful is that the reward does not only celebrate the final fix. It also recognizes **useful diagnostic behavior** along the way.
+
+That reflects real-world engineering:
+- good incident response is often a sequence of narrowing possibilities
+- useful analysis steps may not solve the outage immediately, but they reduce uncertainty
+- repeating the same ineffective move is operationally expensive and psychologically realistic
+
+The `medium` task reward design therefore teaches the agent to behave like a thoughtful operator:
+- investigate
+- infer
+- adapt
+- then fix
+
+### Hard Task Reward Design
+
+The `hard` task is where the reward function becomes fully operational in spirit.
+
+This task is designed around **incident management under pressure**, where every action has consequences and some choices may stabilize one part of the system while harming another. The reward function is not merely scoring correctness. It is measuring whether the agent behaves like a responsible incident commander.
+
+At this level, reward emerges from several interacting forces.
+
+#### Dynamic Bleed
+
+Dynamic bleed represents the cost of leaving the system in a degraded state.
+
+This is one of the most important ideas in the environment:
+- the incident is not frozen in time
+- unresolved failures continue to hurt
+- every step taken in a bad state increases operational damage
+
+This mirrors real outages, where degraded routing, overloaded services, or broken dependencies continue causing user pain until they are actively addressed.
+
+#### Action Penalties
+
+The environment penalizes actions that are:
+- invalid
+- repeated
+- explicitly harmful
+- strategically lazy, such as doing nothing during a live incident
+
+This matters because in real operations, bad actions are not neutral. They consume time, burn trust, and can deepen instability.
+
+The agent is therefore pushed toward responsible action selection, not brute-force experimentation.
+
+#### Urgency Penalty
+
+The urgency penalty increases over time.
+
+This creates a very important pressure gradient:
+- a correct action taken early is more valuable than the same action taken late
+- hesitation has a measurable cost
+- recovery is judged not just by outcome, but by how long the system suffered before that outcome arrived
+
+This is one of the key reasons the hard task feels realistic. It captures the fact that incident response is always racing against worsening consequences.
+
+#### Progress Rewards
+
+Not every good action fully resolves the system, and the reward design acknowledges that.
+
+The environment grants progress rewards for meaningful improvement such as:
+- reducing critical failure severity
+- moving the system from worse states toward healthier ones
+- improving SLA-related conditions before full completion
+
+This is important because real recovery is rarely instantaneous. Strong agents should be rewarded for moving the system in the right direction even before the final recovery state is reached.
+
+That gives the task a more realistic shape:
+- partial recovery matters
+- meaningful stabilization matters
+- intermediate decisions matter
+
+#### SLA Guardrails
+
+The hard task also includes guardrails and forbidden outcomes.
+
+Some actions may immediately create unacceptable system states or violate the scenario's operational constraints. In those cases, the environment can terminate early with a strong negative outcome.
+
+This models a very real production truth:
+- not every technically possible action is operationally acceptable
+- some decisions may reduce pressure but still violate business-critical guarantees
+- systems are not only protected by engineering goals, but also by service obligations
+
+The reward therefore reflects both technical and organizational reality.
+
+### Why the Three Designs Work Together
+
+Taken together, the reward functions create a progression in operational intelligence:
+
+- `easy` teaches accurate single-step correction
+- `medium` teaches diagnostic sequencing and hidden-state reasoning
+- `hard` teaches strategic recovery under pressure, cost, and policy constraints
+
+This tiered reward design is powerful because each task adds a new layer of realism without abandoning clarity.
+
+The agent first learns:
+- how to avoid obvious mistakes
+
+Then it learns:
+- how to reason through incomplete evidence
+
+Finally, it learns:
+- how to act when the system is actively deteriorating and every decision carries trade-offs
+
+That progression is what makes the environment more than a benchmark. It makes it a meaningful test of operational reasoning.
+
 ## Features
 
 - Deterministic execution for scenario sequencing and grading
