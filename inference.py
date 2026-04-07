@@ -219,11 +219,11 @@ Return ONLY JSON:
 def grade_easy(num_scenarios=1):
     total_score = 0.0
     
-    env = DevOpsEnv(task_type="easy")
+    env = DevOpsEnv()
     parser = LLMParser()
     
     for i in range(num_scenarios):
-        obs = env.reset()
+        obs = env.reset(task = "easy")
         total_reward = 0.0
         done = False
         rewards_list = []
@@ -235,7 +235,7 @@ def grade_easy(num_scenarios=1):
             action_str, _, target = parser.parse(obs, action_history)
             
             error_msg = "null"
-            if action_str not in obs.available_actions:
+            if not obs.available_actions or action_str not in obs.available_actions:
                 error_msg = f"invalid_action_{action_str}"
                 action_str = "do_nothing"
 
@@ -265,11 +265,11 @@ def grade_easy(num_scenarios=1):
 def grade_medium(num_scenarios = 1):
     total_score = 0.0
     
-    env = DevOpsEnv(task_type="medium")
+    env = DevOpsEnv()
     parser = LLMParser()
     
     for i in range(num_scenarios):
-        obs = env.reset()
+        obs = env.reset(task = "medium")
         total_reward = 0.0
         done = False
         rewards_list = []
@@ -284,7 +284,7 @@ def grade_medium(num_scenarios = 1):
             action_str, _, target = parser.parse(obs, action_history)
             
             error_msg = "null"
-            if action_str not in obs.available_actions:
+            if not obs.available_actions or action_str not in obs.available_actions:
                 error_msg = f"invalid_action_{action_str}"
                 action_str = "do_nothing"
 
@@ -344,9 +344,9 @@ def _calculate_dynamic_min_reward(env: DevOpsEnv, max_steps: int) -> float:
     return min_reward
 
 def grade_hard():
-    env = DevOpsEnv(task_type="hard", seed=42)
+    env = DevOpsEnv( seed=42)
     parser = LLMParser()
-    obs = env.reset()
+    obs = env.reset(task = "hard")
     total_reward = 0.0
     done = False
     
@@ -378,7 +378,9 @@ def grade_hard():
     return final_score
 
 def main() -> None:
-    print("Final Score =", grade_easy())
+    print("Easy Final Score =", grade_easy())
+    print("Medium Final Score =", grade_medium())
+    print("Hard Final Score =", grade_hard())
 
 if __name__ == "__main__":
     main()

@@ -3,3 +3,4 @@ huggingface_hub
 openenv-core
 openai 
 python-dotenv
+uv

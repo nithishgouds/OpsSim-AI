@@ -1,0 +1,20 @@
+[project]
+name = "opssim_ai"
+version = "0.1.0"
+description = "RL environment for DevOps simulation"
+authors = [{ name = "Sandeep, Venkatesh, Nithish" }]
+dependencies = [
+    "pydantic",
+    "openai",
+    "python-dotenv",
+    "openenv-core>=0.2.0",
+    "fastapi",
+    "uvicorn"
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project.scripts]
+server = "server.app:main"

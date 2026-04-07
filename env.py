@@ -8,22 +8,22 @@ class DevOpsEnv:
 
     _DATA_CACHE = {}
 
-    def __init__(self, seed=42, max_steps=8, task_type="hard"):
+    def __init__(self, seed=42, max_steps=8):
         self.rng = random.Random(seed)
         self.max_steps = max_steps
-        self.task_type = task_type
         self.scenario_index = 0
         self.state_data = {}
         self.observation = None
 
-        if "easy" not in DevOpsEnv._DATA_CACHE and task_type == "easy":
+        if "easy" not in DevOpsEnv._DATA_CACHE:
             dataset_path = os.path.join("tasks", "easy.json")
             if os.path.exists(dataset_path):
                 with open(dataset_path, "r") as f:
                     DevOpsEnv._DATA_CACHE["easy"] = json.load(f)["easy_tasks_dataset"]
 
-    def reset(self) -> Observation:
+    def reset(self, task:str = "easy") -> Observation:
         self.step_count = 0
+        self.task_type = task
 
         if self.task_type == "easy":
             return self._reset_easy()
@@ -346,6 +346,9 @@ class DevOpsEnv:
         step_reward = bleed_loss + action_penalty + urgency_penalty + progress_reward + success_reward
 
         self.observation.system_state = state
+        if self.observation.logs is None:
+            self.observation.logs = ""
+
         self.observation.logs += f"\nStep {self.step_count}: {action_str} -> Reward: {step_reward:.2f}"
         return self.observation, step_reward, done, {}
         

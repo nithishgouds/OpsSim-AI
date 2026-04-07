@@ -7,7 +7,7 @@ class Observation(BaseModel):
     # EASY
     user_message: Optional[str] = None
     config: Optional[dict] = None
-    available_actions: list[str]
+    available_actions: Optional[list[str]] = None
 
     # MEDIUM
     user_messages: Optional[list[str]] = None
@@ -19,13 +19,10 @@ class Observation(BaseModel):
     playbook_text: Optional[str] = None
 
     # COMMON
-    logs: str
+    logs: Optional[str] = None
     step_count: int
 
     
 class Action(BaseModel):
     action_type: str
     target: Optional[str] = None  # needed for HARD task
-
-class Reward(BaseModel):
-    value: float # final reward value
