@@ -1,0 +1,12 @@
+.git
+.gitignore
+.vscode
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+.env
+uv.lock
+Tasks-Doc.txt
+test.py

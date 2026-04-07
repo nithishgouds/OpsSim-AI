@@ -2,7 +2,7 @@ import json
 import os
 import random
 import re
-from models import Observation, Action
+from models import Observation, Action, Reward
 
 class DevOpsEnv:
 
@@ -14,6 +14,7 @@ class DevOpsEnv:
         self.scenario_index = 0
         self.state_data = {}
         self.observation = None
+        self.last_action_error = None
 
         if "easy" not in DevOpsEnv._DATA_CACHE:
             dataset_path = os.path.join("tasks", "easy.json")
@@ -24,6 +25,7 @@ class DevOpsEnv:
     def reset(self, task:str = "easy") -> Observation:
         self.step_count = 0
         self.task_type = task
+        self.last_action_error = None
 
         if self.task_type == "easy":
             return self._reset_easy()
@@ -46,7 +48,7 @@ class DevOpsEnv:
             "available_actions": scenario["available_actions"],
             "user_message": scenario["observation"]["user_message"],
             "logs": scenario["observation"]["logs"],
-            "discovered_herrings": set() # Initialize discovery tracking
+            "discovered_herrings": set()
         }
 
         self.observation = Observation(
@@ -144,16 +146,16 @@ class DevOpsEnv:
         return obs, reward, done, info
 
     def _step_easy(self, action: Action):
-        reward = -0.05  # Standard step penalty for speed
+        reward = -0.05
         done = False
         action_str = action.action_type
+        self.last_action_error = None
 
-        # 1. Invalid Action
         if action_str not in self.state_data["available_actions"] and action_str != "do_nothing":
             reward -= 0.2
+            self.last_action_error = f"invalid_action_{action_str}"
             self.state_data["logs"] = f"[ERROR] Action '{action_str}' is invalid."
             
-        # 2. Correct Action
         elif action_str == self.state_data["correct_action"]:
             reward += 1.0
             done = True
@@ -161,20 +163,15 @@ class DevOpsEnv:
             for key in self.state_data["config"]:
                 self.state_data["config"][key] = "resolved"
                 
-        # 3. Red Herring Action (Discovery Economy)
         elif action_str in self.state_data["red_herrings"]:
             if action_str not in self.state_data["discovered_herrings"]:
-                # First time discovery
                 reward += 0.2
                 self.state_data["discovered_herrings"].add(action_str)
             else:
-                # Stupidity Penalty for repeating a known bad action
                 reward -= 0.4
             
-            # Surface the impact, but NO numerical reward leakage
             self.state_data["logs"] = self.state_data["red_herrings"][action_str]
             
-        # 4. Do Nothing
         elif action_str == "do_nothing":
             reward -= 0.1
             self.state_data["logs"] = "[INFO] No action taken. The system remains broken."
@@ -191,38 +188,35 @@ class DevOpsEnv:
             step_count=self.step_count
         )
         
-        return self.observation, reward, done, {}
+        return self.observation, Reward(value=reward), done, {}
 
     def _step_medium(self, action: Action):
         action_str = action.action_type
         state = self.state_data["state"]
         history = self.state_data["history"]
         rules = self.state_data["transition_rules"]
+        self.last_action_error = None
 
         reward = 0.0
         done = False
 
-        # Validate action
         if action_str not in self.state_data["available_actions"] and action_str != "do_nothing":
             reward += self.state_data["invalid_action_penalty"]
+            self.last_action_error = f"invalid_action_{action_str}"
             action_str = "do_nothing"
 
-        # Apply repeat penalty
         repeat_count = history.count(action_str)
         if repeat_count > 0 and action_str != "do_nothing":
             reward += self.state_data["repeat_penalty"] * repeat_count
 
         history.append(action_str)
         
-        # Apply standard step decay
         reward += self.state_data["step_penalty"] * self.step_count
 
-        # Default fallback strings
         impact_str = "No meaningful change"
         hint_str = "System stable" if state.get("bug_active") is False else "Investigate the system state."
         new_messages = self.state_data["user_messages"]
 
-        # Process Rules Engine
         if action_str in rules:
             rule = rules[action_str]
             condition = rule.get("condition", "true")
@@ -245,18 +239,14 @@ class DevOpsEnv:
             impact_str = "Time passed"
             hint_str = "Waiting for actions"
 
-        # Update User Messages
         self.state_data["user_messages"] = new_messages
 
-        # OVERWRITE logs instead of appending (Stateful Snapshot)
-        # This keeps the token count flat and optimizes LLM caching
         self.state_data["logs"] = (
             f"[LAST ACTION]: {action_str}\n"
             f"[IMPACT]: {impact_str}\n"
             f"[HINT]: {hint_str}"
         )
 
-        # Check success conditions dynamically
         success_conds = self.state_data["success_condition"]
         if success_conds and all(self.evaluate_condition(state, cond) for cond in success_conds):
             done = True
@@ -264,22 +254,21 @@ class DevOpsEnv:
         if self.step_count >= self.max_steps:
             done = True
         
-        # print(action," -- ", reward)
-
         return Observation(
             task_type="medium",
             available_actions=self.state_data["available_actions"],
             user_messages=self.state_data["user_messages"],
             system_metrics=state.get("metrics", {}),
-            logs=self.state_data["logs"], # Now contains only the latest snapshot
+            logs=self.state_data["logs"],
             step_count=self.step_count
-        ), reward, done, {}
+        ), Reward(value=reward), done, {}
 
     def _step_hard(self, action: Action):
         done = False
         action_str = action.action_type
         if getattr(action, 'target', None):
             action_str = f"{action.action_type}({action.target})"
+        self.last_action_error = None
 
         state = self.state_data["state"]
 
@@ -287,6 +276,7 @@ class DevOpsEnv:
 
         if action_str not in self.observation.available_actions:
             action_penalty -= 0.2
+            self.last_action_error = f"invalid_action_{action_str}"
 
         if action_str == "do_nothing":
             action_penalty -= 0.3
@@ -302,9 +292,22 @@ class DevOpsEnv:
             action_penalty += penalty_val
             
             if penalty_val <= -0.8:
+                bleed_loss = self._calculate_dynamic_bleed(state)
+                urgency_penalty = -0.05 * self.step_count
+                progress_reward = 0.0
+                step_reward = (
+                    bleed_loss
+                    + action_penalty
+                    + urgency_penalty
+                    + progress_reward
+                    + self.state_data.get("sla_violation_penalty", -1.0)
+                )
                 self.observation.system_state = state
                 self.observation.step_count = self.step_count
-                return self.observation, self.state_data.get("sla_violation_penalty", -1.0), True, {"reason": "guardrail_violation"}
+                if self.observation.logs is None:
+                    self.observation.logs = ""
+                self.observation.logs += f"\nStep {self.step_count}: {action_str} -> Reward: {step_reward:.2f}"
+                return self.observation, Reward(value=step_reward), True, {"reason": "guardrail_violation"}
 
         prev_state = json.loads(json.dumps(state))
 
@@ -332,9 +335,19 @@ class DevOpsEnv:
         sla_status = self._check_sla_compliance(state)
 
         if sla_status == "FAIL":
+            step_reward = (
+                bleed_loss
+                + action_penalty
+                + urgency_penalty
+                + progress_reward
+                + self.state_data.get("sla_violation_penalty", -1.0)
+            )
             self.observation.system_state = state
             self.observation.step_count = self.step_count
-            return self.observation, self.state_data.get("sla_violation_penalty", -1.0), True, {"reason": "sla_violation"}
+            if self.observation.logs is None:
+                self.observation.logs = ""
+            self.observation.logs += f"\nStep {self.step_count}: {action_str} -> Reward: {step_reward:.2f}"
+            return self.observation, Reward(value=step_reward), True, {"reason": "sla_violation"}
 
         if sla_status == "PASS":
             success_reward = 1.0
@@ -350,7 +363,7 @@ class DevOpsEnv:
             self.observation.logs = ""
 
         self.observation.logs += f"\nStep {self.step_count}: {action_str} -> Reward: {step_reward:.2f}"
-        return self.observation, step_reward, done, {}
+        return self.observation, Reward(value=step_reward), done, {}
         
     def _detect_sla_improvement(self, prev_state, new_state) -> bool:
         required_rules = self.state_data.get("sla_rules", {}).get("required", [])
@@ -551,3 +564,6 @@ class DevOpsEnv:
             "state": self.state_data,
             "step_count": self.step_count
         }
+
+    def close(self):
+        return None
