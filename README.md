@@ -431,21 +431,20 @@ curl http://localhost:7860/health
 ```text
 [START] task=easy_scenario_1 env=opssim_ai model=meta-llama/Meta-Llama-3-8B-Instruct
 [STEP] step=1 action=reboot_cache_cluster reward=0.95 done=true error=null
-[END] success=true steps=1 rewards=0.95
+[END] success=true steps=1 score=0.9634 rewards=0.95
 [START] task=medium_scenario_1 env=opssim_ai model=meta-llama/Meta-Llama-3-8B-Instruct
 [STEP] step=1 action=analyze_failure_timestamps reward=0.27 done=false error=null
 [STEP] step=2 action=isolate_date_parsing_logic reward=0.24 done=false error=null
 [STEP] step=3 action=deploy_weekend_date_patch reward=0.91 done=true error=null
-[END] success=true steps=3 rewards=0.27,0.24,0.91
+[END] success=true steps=3 score=0.6014 rewards=0.27,0.24,0.91
 [START] task=hard_scenario_1 env=opssim_ai model=meta-llama/Meta-Llama-3-8B-Instruct
 [STEP] step=1 action=do_nothing reward=-1.05 done=false error=null
 [STEP] step=2 action=restart(checkout_cart) reward=-0.80 done=false error=null
-[STEP] step=3 action=restart(payment_gateway) reward=-1.35 done=false error=null
-[STEP] step=4 action=shutdown(user_analytics) reward=-0.40 done=false error=null
+[STEP] step=3 action=shutdown(user_analytics) reward=-0.35 done=false error=null
+[STEP] step=4 action=restart(payment_gateway) reward=-1.40 done=false error=null
 [STEP] step=5 action=shutdown(recommendation_engine) reward=-0.40 done=false error=null
 [STEP] step=6 action=restart(checkout_cart) reward=0.75 done=true error=null
-[END] success=true steps=6 rewards=-1.05,-0.80,-1.35,-0.40,-0.40,0.75
-Final Score = 0.7744
+[END] success=true steps=6 score=0.4583 rewards=-1.05,-0.80,-0.35,-1.40,-0.40,0.75
 ```
 
 ## Hackathon Compliance
