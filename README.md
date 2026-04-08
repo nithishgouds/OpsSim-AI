@@ -6,6 +6,8 @@ colorTo: gray
 sdk: docker
 app_port: 7860
 pinned: false
+tags:
+  - openenv
 ---
 
 # OpsSim-AI: DevOps Incident Response Arena
