@@ -395,7 +395,7 @@ def grade_easy(num_scenarios=1):
             if start_printed:
                 success = "true" if (done and total_reward > 0) else "false"
                 rewards_str = ",".join(rewards_list)
-                print(f"[END] success={success} steps={len(rewards_list)} rewards={rewards_str}")
+                print(f"[END] success={success} steps={len(rewards_list)} score={scenario_score:.4f} rewards={rewards_str}")
 
         total_score += scenario_score
 
@@ -443,7 +443,7 @@ def grade_medium(num_scenarios = 1):
             if start_printed:
                 success = "true" if (done and total_reward > 0) else "false"
                 rewards_str = ",".join(rewards_list)
-                print(f"[END] success={success} steps={len(rewards_list)} rewards={rewards_str}")
+                print(f"[END] success={success} steps={len(rewards_list)} score={scenario_score:.4f} rewards={rewards_str}")
 
         total_score += scenario_score
 
@@ -510,7 +510,7 @@ def grade_hard(num_scenarios=1):
             if start_printed:
                 success = "true" if (done and total_reward > 0) else "false"
                 rewards_str = ",".join(rewards_list)
-                print(f"[END] success={success} steps={len(rewards_list)} rewards={rewards_str}")
+                print(f"[END] success={success} steps={len(rewards_list)} score={final_score:.4f} rewards={rewards_str}")
 
         total_score += final_score
         
