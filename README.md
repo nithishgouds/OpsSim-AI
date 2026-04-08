@@ -334,7 +334,7 @@ That progression is what makes the environment more than a benchmark. It makes i
 ### 1. Clone the Repository
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/nithishgouds/OpsSim-AI
 cd OpsSim-AI
 ```
 
@@ -368,7 +368,7 @@ pip install -r requirements.txt
 Create a `.env` file in the project root and add:
 
 ```env
-HF_TOKEN=your_token_here
+HF_TOKEN=<your_token_here>
 API_BASE_URL=https://router.huggingface.co/v1
 MODEL_NAME=Qwen/Qwen2.5-72B-Instruct
 ```
@@ -382,11 +382,32 @@ python inference.py
 ## Example Output
 
 ```text
-[START] task=hard_scenario_1 env=ops-sim model=Qwen/Qwen2.5-72B-Instruct
+[START] task=hard_scenario_1 env=opssim_ai model=Qwen/Qwen2.5-72B-Instruct
 [STEP] step=1 action=restart(database) reward=-0.25 done=false error=null
 [STEP] step=2 action=reroute_traffic reward=0.30 done=false error=null
 [STEP] step=3 action=scale_backend reward=1.10 done=true error=null
 [END] success=true steps=3 rewards=-0.25,0.30,1.10
+```
+## Baseline Score
+
+```text
+[START] task=easy_scenario_1 env=opssim_ai model=meta-llama/Meta-Llama-3-8B-Instruct
+[STEP] step=1 action=reboot_cache_cluster reward=0.95 done=true error=null
+[END] success=true steps=1 rewards=0.95
+[START] task=medium_scenario_1 env=opssim_ai model=meta-llama/Meta-Llama-3-8B-Instruct
+[STEP] step=1 action=analyze_failure_timestamps reward=0.27 done=false error=null
+[STEP] step=2 action=isolate_date_parsing_logic reward=0.24 done=false error=null
+[STEP] step=3 action=deploy_weekend_date_patch reward=0.91 done=true error=null
+[END] success=true steps=3 rewards=0.27,0.24,0.91
+[START] task=hard_scenario_1 env=opssim_ai model=meta-llama/Meta-Llama-3-8B-Instruct
+[STEP] step=1 action=do_nothing reward=-1.05 done=false error=null
+[STEP] step=2 action=restart(checkout_cart) reward=-0.80 done=false error=null
+[STEP] step=3 action=restart(payment_gateway) reward=-1.35 done=false error=null
+[STEP] step=4 action=shutdown(user_analytics) reward=-0.40 done=false error=null
+[STEP] step=5 action=shutdown(recommendation_engine) reward=-0.40 done=false error=null
+[STEP] step=6 action=restart(checkout_cart) reward=0.75 done=true error=null
+[END] success=true steps=6 rewards=-1.05,-0.80,-1.35,-0.40,-0.40,0.75
+Final Score = 0.7744
 ```
 
 ## Hackathon Compliance

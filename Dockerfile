@@ -1,17 +1,18 @@
+# Use an official lightweight Python image
 FROM python:3.11-slim
 
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV PORT=7860
-
+# Set the working directory inside the container
 WORKDIR /app
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Copy your entire project into the container
+COPY . /app
 
-COPY . .
+# Install your project and its dependencies (from pyproject.toml)
+RUN pip install --no-cache-dir .
 
+# Hugging Face Spaces require applications to listen on port 7860
+ENV PORT=7860
 EXPOSE 7860
 
-CMD ["python", "-m", "server.app"]
+# Command to run your FastAPI server
+CMD ["python", "server/app.py"]
