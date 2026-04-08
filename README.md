@@ -1,3 +1,13 @@
+---
+title: OpsSim-AI
+emoji: 🚨
+colorFrom: red
+colorTo: gray
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # OpsSim-AI: DevOps Incident Response Arena
 
 *When systems begin to fail, every second becomes a decision.*
