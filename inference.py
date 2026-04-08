@@ -349,7 +349,7 @@ def _calculate_medium_bounds(env: APIClient, max_steps: int) -> tuple[float, flo
     for step in range(1, max_steps + 1):
         max_reward += max_rule_reward + (step_pen * step)
 
-    max_reward = max(max_reward, 1.0)
+    max_reward = max(max_reward, 0.999)
 
     return min_reward, max_reward
         
@@ -366,7 +366,7 @@ def grade_easy(num_scenarios=1):
         action_history = []
         start_printed = False
         min_reward = -1.0
-        max_reward = 1.0
+        max_reward = 0.99
         try:
             obs = env.reset(task = "easy")
             min_reward, max_reward = _calculate_easy_bounds(env, MAX_STEPS)
@@ -391,13 +391,13 @@ def grade_easy(num_scenarios=1):
                     break
         finally:
             env.close()
-            scenario_score = max(0.0, min(1.0, (total_reward - min_reward) / ((max_reward - min_reward) + 0.001)))
+            scenario_score = max(0.01, min(0.99, (total_reward - min_reward) / ((max_reward - min_reward) + 0.001)))
             
             scenario_score = 0.001 + (scenario_score * 0.998)
             if start_printed:
                 success = "true" if (done and total_reward > 0) else "false"
                 rewards_str = ",".join(rewards_list)
-                print(f"[END] success={success} steps={len(rewards_list)} score=0.5 rewards={rewards_str}")
+                print(f"[END] success={success} steps={len(rewards_list)} score={scenario_score:.4f} rewards={rewards_str}")
 
         total_score += scenario_score
 
@@ -416,7 +416,7 @@ def grade_medium(num_scenarios = 1):
         action_history = []
         start_printed = False
         min_reward = -1.0
-        max_reward = 1.0
+        max_reward = 0.99
         try:
             obs = env.reset(task = "medium")
             min_reward, max_reward = _calculate_medium_bounds(env, MAX_STEPS)
@@ -441,12 +441,12 @@ def grade_medium(num_scenarios = 1):
                     break
         finally:
             env.close()
-            scenario_score = max(0.0, min(1.0, (total_reward - min_reward) / (max_reward - min_reward)))
+            scenario_score = max(0.01, min(0.99, (total_reward - min_reward) / ((max_reward - min_reward) + 0.001)))
             scenario_score = 0.001 + (scenario_score * 0.998)
             if start_printed:
                 success = "true" if (done and total_reward > 0) else "false"
                 rewards_str = ",".join(rewards_list)
-                print(f"[END] success={success} steps={len(rewards_list)} score=0.5 rewards={rewards_str}")
+                print(f"[END] success={success} steps={len(rewards_list)} score={scenario_score:.4f} rewards={rewards_str}")
 
         total_score += scenario_score
 
@@ -478,8 +478,8 @@ def grade_hard(num_scenarios=1):
         action_history = []
         rewards_list = []
         start_printed = False
-        min_reward = 0.0
-        max_reward = 1.0
+        min_reward = 0.01
+        max_reward = 0.99
         last_info = {}
         try:
             obs = env.reset(task = "hard")
@@ -511,12 +511,12 @@ def grade_hard(num_scenarios=1):
         finally:
             env.close()
             final_score = (total_reward - min_reward) / ((max_reward - min_reward)+0.001)
-            final_score = max(0.0, min(1.0, final_score))
+            final_score = max(0.01, min(0.99, final_score))
             final_score = 0.001 + (final_score * 0.998)
             if start_printed:
                 success = "true" if (done and last_info.get("reason") not in {"guardrail_violation", "sla_violation"}) else "false"
                 rewards_str = ",".join(rewards_list)
-                print(f"[END] success={success} steps={len(rewards_list)} score=0.5 rewards={rewards_str}")
+                print(f"[END] success={success} steps={len(rewards_list)} score={final_score:.4f} rewards={rewards_str}")
 
         total_score += final_score
         
