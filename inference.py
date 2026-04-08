@@ -477,6 +477,7 @@ def grade_hard(num_scenarios=1):
         start_printed = False
         min_reward = 0.0
         max_reward = 1.0
+        last_info = {}
         try:
             obs = env.reset(task = "hard")
             min_reward = _calculate_dynamic_min_reward(env, MAX_STEPS)
@@ -494,6 +495,7 @@ def grade_hard(num_scenarios=1):
                 action = Action(action_type=action_str, target=target)
                 
                 obs, reward, done, info = env.step(action)
+                last_info = info
                 total_reward += reward
                 rewards_list.append(f"{reward:.2f}")
                 action_history.append(log_action)
@@ -508,7 +510,7 @@ def grade_hard(num_scenarios=1):
             final_score = (total_reward - min_reward) / (max_reward - min_reward)
             final_score = max(0.0, min(1.0, final_score))
             if start_printed:
-                success = "true" if (done and total_reward > 0) else "false"
+                success = "true" if (done and last_info.get("reason") not in {"guardrail_violation", "sla_violation"}) else "false"
                 rewards_str = ",".join(rewards_list)
                 print(f"[END] success={success} steps={len(rewards_list)} score={final_score:.4f} rewards={rewards_str}")
 
