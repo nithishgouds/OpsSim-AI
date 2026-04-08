@@ -382,7 +382,7 @@ Create a `.env` file in the project root and add:
 ```env
 HF_TOKEN=<your_token_here>
 API_BASE_URL=https://router.huggingface.co/v1
-MODEL_NAME=Qwen/Qwen2.5-72B-Instruct
+MODEL_NAME=meta-llama/Meta-Llama-3-8B-Instruct
 ```
 
 ### 5. Run the Project
@@ -391,10 +391,36 @@ MODEL_NAME=Qwen/Qwen2.5-72B-Instruct
 python inference.py
 ```
 
+### 6. Docker Installation and Setup
+
+Install Docker before building the project container:
+
+- Windows: install Docker Desktop and make sure the Docker engine is running
+- Linux: install Docker Engine and verify that the `docker` command works
+- WSL: enable Docker Desktop WSL integration if you are running the project from Ubuntu or another WSL distro
+
+Build the Docker image:
+
+```bash
+docker build -t opssim-ai .
+```
+
+Run the Docker container:
+
+```bash
+docker run -p 7860:7860 opssim-ai
+```
+
+Optional health check:
+
+```bash
+curl http://localhost:7860/health
+```
+
 ## Example Output
 
 ```text
-[START] task=hard_scenario_1 env=opssim_ai model=Qwen/Qwen2.5-72B-Instruct
+[START] task=hard_scenario_1 env=opssim_ai model=meta-llama/Meta-Llama-3-8B-Instruct
 [STEP] step=1 action=restart(database) reward=-0.25 done=false error=null
 [STEP] step=2 action=reroute_traffic reward=0.30 done=false error=null
 [STEP] step=3 action=scale_backend reward=1.10 done=true error=null
