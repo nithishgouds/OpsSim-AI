@@ -1,14 +1,13 @@
 import os
 import json
-import requests
 from dotenv import load_dotenv
 from openai import OpenAI
+from env import DevOpsEnv
 from models import Action
 
 load_dotenv()
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-ENV_URL = os.getenv("ENV_URL", "http://localhost:7860")
 MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Meta-Llama-3-8B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN")
 MAX_STEPS = 8
@@ -18,59 +17,6 @@ if HF_TOKEN is None:
     raise ValueError("HF_TOKEN environment variable is required")
 
 client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
-
-class APIClient:
-    def __init__(self, base_url):
-        self.base_url = base_url
-        self.state_data = {}
-        self.last_action_error = None
-
-    def reset(self, task):
-        payload = {"task": task, "seed": 42} 
-        resp = requests.post(f"{self.base_url}/reset", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        self._sync_state()
-        self.last_action_error = None
-        return self._to_dotdict(data.get("observation", {}))
-
-    def step(self, action):
-        payload = {"action_type": action.action_type}
-        if hasattr(action, "target") and action.target:
-            payload["target"] = action.target
-            
-        resp = requests.post(f"{self.base_url}/step", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        
-        obs = self._to_dotdict(data.get("observation", {}))
-        
-        logs = data.get("observation", {}).get("logs", "")
-        if isinstance(logs, str) and "[ERROR]" in logs:
-            self.last_action_error = logs
-        else:
-            self.last_action_error = None
-            
-        self._sync_state()
-        return obs, data.get("reward", 0.0), data.get("done", False), data.get("info", {})
-
-    def _sync_state(self):
-        try:
-            resp = requests.get(f"{self.base_url}/state")
-            if resp.status_code == 200:
-                self.state_data = resp.json().get("state", {}).get("state", {})
-        except Exception:
-            pass
-
-    def _to_dotdict(self, d):
-        class DotDict(dict):
-            def __getattr__(self, attr):
-                return self.get(attr)
-        return DotDict(d)
-
-    def close(self):
-        pass
-
 
 class LLMParser:
     def __init__(self):
@@ -274,18 +220,26 @@ Return ONLY JSON:
                 "state": getattr(obs, "system_state", None)
             }, sort_keys=True)
         
-def _calculate_easy_bounds(env: APIClient, max_steps: int) -> tuple[float, float]: # CHANGED: Updated type hint to APIClient
+def _calculate_easy_bounds(env: DevOpsEnv, max_steps: int) -> tuple[float, float]:
+    """
+    Calculates theoretical min and max rewards for the Easy task based on env.py logic.
+    """
+    # Base step costs defined in _step_easy
     base_step_cost = -0.05
-    correct_reward = 1.0 + base_step_cost
-    new_herring_reward = 0.2 + base_step_cost
-    repeat_herring_penalty = -0.4 + base_step_cost
-    invalid_action_penalty = -0.2 + base_step_cost
+    correct_reward = 1.0 + base_step_cost        # +0.95 net
+    new_herring_reward = 0.2 + base_step_cost    # +0.15 net
+    repeat_herring_penalty = -0.4 + base_step_cost # -0.45 net
+    invalid_action_penalty = -0.2 + base_step_cost # -0.25 net
 
     red_herrings_count = len(env.state_data.get("red_herrings", {}))
 
+    # MAX REWARD: The optimal "score-farming" path is to discover all available red herrings 
+    # (up to max_steps - 1) for the +0.2 bonus, then execute the correct action on the final step.
     usable_herrings = min(red_herrings_count, max_steps - 1)
     max_reward = (usable_herrings * new_herring_reward) + correct_reward
 
+    # MIN REWARD: The worst-case scenario is either spamming invalid actions for all steps,
+    # OR discovering a red herring once, then getting penalized for repeating it on all remaining steps.
     worst_invalid_spam = max_steps * invalid_action_penalty
     
     if red_herrings_count > 0:
@@ -298,28 +252,38 @@ def _calculate_easy_bounds(env: APIClient, max_steps: int) -> tuple[float, float
     return min_reward, max_reward
 
 
-def _calculate_medium_bounds(env: APIClient, max_steps: int) -> tuple[float, float]: # CHANGED: Updated type hint to APIClient
+def _calculate_medium_bounds(env: DevOpsEnv, max_steps: int) -> tuple[float, float]:
+    """
+    Calculates theoretical min and max rewards for the Medium task based on env.py logic.
+    """
     invalid_pen = env.state_data.get("invalid_action_penalty", -0.2)
     repeat_pen = env.state_data.get("repeat_penalty", -0.15)
     step_pen = env.state_data.get("step_penalty", -0.03)
     rules = env.state_data.get("transition_rules", {})
 
+    # MIN REWARD: Repeating an invalid action for all max_steps.
+    # According to _step_medium, an invalid action converts to "do_nothing", meaning the agent 
+    # gets hit with the invalid penalty, the repeat penalty (for repeating "do_nothing"), and the step penalty.
     min_reward = 0.0
     for step in range(1, max_steps + 1):
         repeat_count = step - 1 
         step_worst = invalid_pen + (repeat_pen * repeat_count) + (step_pen * step)
         min_reward += step_worst
 
+    # MAX REWARD: Finding the highest rewarding rule and hitting it optimally.
     max_rule_reward = 0.0
     for rule in rules.values():
         r1 = float(rule.get("reward", 0.0))
         r2 = float(rule.get("else_reward", 0.0))
         max_rule_reward = max(max_rule_reward, r1, r2)
     
+    # We aggregate the maximum possible rule reward minus the compounding step penalty over the maximum steps.
     max_reward = 0.0
     for step in range(1, max_steps + 1):
         max_reward += max_rule_reward + (step_pen * step)
 
+    # Establish a minimum floor for max_reward to prevent zero-division during normalization 
+    # if the scenario relies purely on condition-clearing rather than positive rule rewards.
     max_reward = max(max_reward, 1.0)
 
     return min_reward, max_reward
@@ -327,7 +291,7 @@ def _calculate_medium_bounds(env: APIClient, max_steps: int) -> tuple[float, flo
 def grade_easy(num_scenarios=1):
     total_score = 0.0
     
-    env = APIClient(base_url=ENV_URL) # CHANGED: Initialized APIClient instead of local class
+    env = DevOpsEnv(seed = 42)
     parser = LLMParser()
     
     for i in range(num_scenarios):
@@ -373,7 +337,7 @@ def grade_easy(num_scenarios=1):
 def grade_medium(num_scenarios = 1):
     total_score = 0.0
     
-    env = APIClient(base_url=ENV_URL) # CHANGED: Initialized APIClient instead of local class
+    env = DevOpsEnv(seed = 42)
     parser = LLMParser()
     
     for i in range(num_scenarios):
@@ -416,7 +380,7 @@ def grade_medium(num_scenarios = 1):
 
     return total_score / num_scenarios
 
-def _calculate_dynamic_min_reward(env: APIClient, max_steps: int) -> float: # CHANGED: Updated type hint to APIClient
+def _calculate_dynamic_min_reward(env: DevOpsEnv, max_steps: int) -> float:
     worst_bleed = 0.0
     for rule in env.state_data.get("bleed_rules", []):
         penalty = rule.get("penalty", 0.0)
@@ -433,7 +397,7 @@ def _calculate_dynamic_min_reward(env: APIClient, max_steps: int) -> float: # CH
 def grade_hard(num_scenarios=1):
     total_score = 0.0
     
-    env = APIClient(base_url=ENV_URL) # CHANGED: Initialized APIClient instead of local class
+    env = DevOpsEnv(seed=42)
     parser = LLMParser()
     
     for i in range(num_scenarios):

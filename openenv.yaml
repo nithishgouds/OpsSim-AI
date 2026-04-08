@@ -1,6 +1,12 @@
 name: opssim_ai
-description: RL environment for debugging tasks
-
+description: RL environment for DevOps simulation
+version: "0.1.0"
+authors:
+  - Sandeep
+  - Venkatesh
+  - Nithish
+tags:
+  - openenv
 entry_point: env:DevOpsEnv
 
 tasks:

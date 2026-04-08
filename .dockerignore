@@ -1,12 +1,21 @@
+# Git
 .git
 .gitignore
-.vscode
-__pycache__
-*.pyc
-*.pyo
-*.pyd
-*.log
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables (Security best practice)
 .env
-uv.lock
-Tasks-Doc.txt
-test.py
+
+# OS and IDE generated files
+.DS_Store
+.vscode/
+.idea/

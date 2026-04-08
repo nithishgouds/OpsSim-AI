@@ -8,7 +8,7 @@ dependencies = [
     "pydantic",
     "openai",
     "python-dotenv",
-    "openenv @ git+https://github.com/meta-pytorch/OpenEnv.git",
+    "openenv-core",
     "fastapi",
     "uvicorn"
 ]
