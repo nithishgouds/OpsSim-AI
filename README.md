@@ -108,6 +108,16 @@ Responsibilities:
 
 Using Pydantic ensures clean structure, consistent interfaces, and OpenEnv-aligned interaction semantics.
 
+## Repository Structure
+
+- `env.py` -> core simulation environment and reward engine
+- `inference.py` -> LLM decision layer, evaluation loop, and baseline scoring
+- `models.py` -> typed Pydantic schemas for observations, actions, and rewards
+- `tasks/` -> scenario datasets for easy, medium, and hard incidents
+- `server/` -> FastAPI service layer used for deployment and API interaction
+- `openenv.yaml` -> OpenEnv metadata and task registration
+- `Dockerfile` -> container build definition for local and Hugging Face deployment
+
 ## Reward Function Design
 
 The reward design is built to feel operationally real, not artificially convenient.
@@ -186,6 +196,76 @@ This design is realistic because it mirrors how production incidents actually un
 - business constraints shape technical decisions
 
 The result is a reward function that does more than score correctness. It evaluates operational judgment.
+
+## Task Utility
+
+### Easy Task: Useful for Direct Configuration Failures
+
+The `easy` task is useful in situations where the incident is real, important, but still relatively localized. These are the kinds of failures where the system is broken because one configuration choice is wrong, one service dependency is pointed to the wrong target, or one operational fix resolves the issue quickly.
+
+This task is valuable for benchmarking:
+- first-response automation
+- alert triage assistants
+- junior-operator copilots
+- simple remediation workflows
+
+It reflects common production moments such as:
+- a bad cache configuration
+- a misrouted internal dependency
+- a service restart or config reload that resolves the outage
+
+Why this matters:
+- many real incidents are not complex distributed disasters
+- teams still lose time on simple failures because logs are noisy or user reports are misleading
+- a good AI system should solve easy incidents fast, confidently, and without unnecessary actions
+
+So the `easy` task measures whether the agent can identify a direct root cause and act precisely under light operational pressure.
+
+### Medium Task: Useful for Multi-Step Diagnosis Under Uncertainty
+
+The `medium` task is useful in situations where the failure is not obvious from a single log line or a single user complaint. This is the kind of incident where the visible symptom is only part of the story, and the operator must investigate, test, and infer hidden causes over several steps.
+
+This task is valuable for benchmarking:
+- debugging copilots
+- incident investigation assistants
+- support escalation automation
+- internal reliability tools that recommend next-best actions
+
+It reflects real situations such as:
+- weekend-only or edge-case failures
+- date parsing or serialization bugs
+- incidents where metrics look acceptable but users are still impacted
+- failures that only become understandable after structured exploration
+
+Why this matters:
+- many operational failures are not solved by one-shot answers
+- engineers often need to narrow possibilities carefully before acting
+- repeating the wrong investigation steps wastes time and increases confusion
+
+So the `medium` task measures whether the agent can reason across multiple steps, learn from previous action outcomes, and convert incomplete evidence into a correct diagnosis.
+
+### Hard Task: Useful for High-Stakes SLA and Multi-Service Incidents
+
+The `hard` task is useful in situations where the system is already in serious distress and every action has consequences beyond the immediate component being touched. These are the incidents where services interact, customer impact is active, and the operator must think in terms of business guardrails, cascading failures, and recovery trade-offs.
+
+This task is valuable for benchmarking:
+- advanced incident commanders
+- AI reliability agents for mission-critical systems
+- automated mitigation planners
+- decision support systems for multi-service outages
+
+It reflects production scenarios such as:
+- payment or checkout instability
+- overloaded downstream dependencies
+- partial shutdown decisions to protect critical flows
+- recovery plans constrained by SLA or forbidden actions
+
+Why this matters:
+- the hardest operational decisions are rarely about a single machine
+- protecting revenue-critical paths may require sacrificing noncritical services
+- doing nothing can be expensive, but acting carelessly can be worse
+
+So the `hard` task measures whether the agent can make disciplined decisions in the presence of urgency, system bleed, and operational guardrails.
 
 ### Easy Task Reward Design
 
@@ -391,6 +471,8 @@ MODEL_NAME=meta-llama/Meta-Llama-3-8B-Instruct
 python inference.py
 ```
 
+Running `inference.py` executes the predefined evaluation scenarios, calls the LLM for each step, and prints step-by-step decision traces followed by final task scores.
+
 ### 6. Docker Installation and Setup
 
 Install Docker before building the project container:
@@ -416,6 +498,28 @@ Optional health check:
 ```bash
 curl http://localhost:7860/health
 ```
+
+## How to Run Demo
+
+1. Run:
+
+```bash
+python inference.py
+```
+
+2. The system will:
+- load predefined scenarios
+- simulate agent decisions across easy, medium, and hard tasks
+- print step-by-step logs for each action taken
+- output final task scores at the end of each episode
+
+3. A successful run will end with lines shaped like:
+
+```text
+[END] success=true steps=... score=... rewards=...
+```
+
+Success means the environment executed correctly and the agent completed the episode with a valid normalized task score.
 
 ## Example Output
 
@@ -447,6 +551,27 @@ curl http://localhost:7860/health
 [END] success=true steps=6 score=0.4583 rewards=-1.05,-0.80,-0.35,-1.40,-0.40,0.75
 ```
 
+## OpenEnv Interface Mapping
+
+This environment follows the OpenEnv interaction model directly:
+
+- `reset()` -> initializes a scenario and returns the first typed observation
+- `step(action)` -> applies one action and returns `(observation, reward, done, info)`
+- `state()` -> returns the current environment state
+- `Observation`, `Action`, and `Reward` are defined as typed Pydantic models in `models.py`
+- `openenv.yaml` declares the environment metadata and registered tasks
+
+Episode flow:
+- initialize with `reset()`
+- inspect the observation
+- choose an action
+- receive typed reward feedback
+- continue until the task terminates
+
+## Deployment
+
+Live demo: https://nithishgouds-opssim-ai.hf.space
+
 ## Hackathon Compliance
 
 This project is designed to align with the hackathon requirements:
@@ -458,6 +583,13 @@ This project is designed to align with the hackathon requirements:
 - Deterministic environment behavior for task sequencing and grading
 - OpenAI client used for all LLM calls
 - Standardized inference output format for evaluation
+
+## Notes & Constraints
+
+- Requires a valid Hugging Face token for LLM-backed inference
+- Runtime behavior depends on an external hosted model endpoint
+- LLM outputs are made more stable through deterministic settings, but small variations may still occur across providers
+- The environment is designed for realistic simulation and benchmarking, not direct production execution against live infrastructure
 
 ## Future Improvements
 
