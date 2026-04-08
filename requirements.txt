@@ -1,7 +1,8 @@
 pydantic
 huggingface_hub
-openenv-core
+openenv-core @ git+https://github.com/meta-pytorch/OpenEnv.git
 openai
+requests
 python-dotenv
 fastapi
 uvicorn

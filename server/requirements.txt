@@ -3,4 +3,4 @@ uvicorn
 pydantic
 python-dotenv
 openai
-openenv @ git+https://github.com/meta-pytorch/OpenEnv.git
+openenv-core @ git+https://github.com/meta-pytorch/OpenEnv.git

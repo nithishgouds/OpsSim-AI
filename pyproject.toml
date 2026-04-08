@@ -7,8 +7,9 @@ authors = [{ name = "Sandeep, Venkatesh, Nithish" }]
 dependencies = [
     "pydantic",
     "openai",
+    "requests",
     "python-dotenv",
-    "openenv-core",
+    "openenv-core @ git+https://github.com/meta-pytorch/OpenEnv.git",
     "fastapi",
     "uvicorn"
 ]
