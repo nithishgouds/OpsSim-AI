@@ -4,6 +4,7 @@ import requests
 from dotenv import load_dotenv
 from openai import OpenAI
 from models import Action
+from env import DevOpsEnv
 
 load_dotenv()
 
@@ -24,42 +25,69 @@ class APIClient:
         self.base_url = base_url
         self.state_data = {}
         self.last_action_error = None
+        self.local_env = DevOpsEnv(seed=42)
+        self.use_local_env = False
 
     def reset(self, task):
-        payload = {"task": task, "seed": 42} 
-        resp = requests.post(f"{self.base_url}/reset", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        self._sync_state()
         self.last_action_error = None
-        return self._to_dotdict(data.get("observation", {}))
+
+        if self.use_local_env:
+            obs = self.local_env.reset(task=task)
+            self.state_data = self.local_env.state().get("state", {})
+            self.last_action_error = self.local_env.last_action_error
+            return self._to_dotdict(obs.model_dump())
+
+        payload = {"task": task, "seed": 42}
+        try:
+            resp = requests.post(f"{self.base_url}/reset", json=payload, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            self._sync_state()
+            return self._to_dotdict(data.get("observation", {}))
+        except requests.RequestException:
+            self.use_local_env = True
+            obs = self.local_env.reset(task=task)
+            self.state_data = self.local_env.state().get("state", {})
+            self.last_action_error = self.local_env.last_action_error
+            return self._to_dotdict(obs.model_dump())
 
     def step(self, action):
+        if self.use_local_env:
+            obs, reward, done, info = self.local_env.step(action)
+            self.state_data = self.local_env.state().get("state", {})
+            self.last_action_error = self.local_env.last_action_error
+            reward_value = reward.value if hasattr(reward, "value") else reward
+            return self._to_dotdict(obs.model_dump()), reward_value, done, info
+
         payload = {"action_type": action.action_type}
         if hasattr(action, "target") and action.target:
             payload["target"] = action.target
-            
-        resp = requests.post(f"{self.base_url}/step", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        
-        obs = self._to_dotdict(data.get("observation", {}))
-        
-        logs = data.get("observation", {}).get("logs", "")
-        if isinstance(logs, str) and "[ERROR]" in logs:
-            self.last_action_error = logs
-        else:
-            self.last_action_error = None
-            
-        self._sync_state()
-        return obs, data.get("reward", 0.0), data.get("done", False), data.get("info", {})
+
+        try:
+            resp = requests.post(f"{self.base_url}/step", json=payload, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            obs = self._to_dotdict(data.get("observation", {}))
+            self.last_action_error = data.get("last_action_error", None)
+            self._sync_state()
+            return obs, data.get("reward", 0.0), data.get("done", False), data.get("info", {})
+        except requests.RequestException:
+            self.use_local_env = True
+            obs, reward, done, info = self.local_env.step(action)
+            self.state_data = self.local_env.state().get("state", {})
+            self.last_action_error = self.local_env.last_action_error
+            reward_value = reward.value if hasattr(reward, "value") else reward
+            return self._to_dotdict(obs.model_dump()), reward_value, done, info
 
     def _sync_state(self):
+        if self.use_local_env:
+            self.state_data = self.local_env.state().get("state", {})
+            return
         try:
-            resp = requests.get(f"{self.base_url}/state")
+            resp = requests.get(f"{self.base_url}/state", timeout=10)
             if resp.status_code == 200:
                 self.state_data = resp.json().get("state", {}).get("state", {})
-        except Exception:
+        except requests.RequestException:
             pass
 
     def _to_dotdict(self, d):
@@ -69,7 +97,8 @@ class APIClient:
         return DotDict(d)
 
     def close(self):
-        pass
+        if self.use_local_env:
+            self.local_env.close()
 
 
 class LLMParser:
@@ -336,6 +365,8 @@ def grade_easy(num_scenarios=1):
         rewards_list = []
         action_history = []
         start_printed = False
+        min_reward = -1.0
+        max_reward = 1.0
         try:
             obs = env.reset(task = "easy")
             min_reward, max_reward = _calculate_easy_bounds(env, MAX_STEPS)
@@ -364,7 +395,7 @@ def grade_easy(num_scenarios=1):
             if start_printed:
                 success = "true" if (done and total_reward > 0) else "false"
                 rewards_str = ",".join(rewards_list)
-                print(f"[END] success={success} steps={len(rewards_list)} score={scenario_score:.2f} rewards={rewards_str}")
+                print(f"[END] success={success} steps={len(rewards_list)} rewards={rewards_str}")
 
         total_score += scenario_score
 
@@ -382,6 +413,8 @@ def grade_medium(num_scenarios = 1):
         rewards_list = []
         action_history = []
         start_printed = False
+        min_reward = -1.0
+        max_reward = 1.0
         try:
             obs = env.reset(task = "medium")
             min_reward, max_reward = _calculate_medium_bounds(env, MAX_STEPS)
@@ -410,7 +443,7 @@ def grade_medium(num_scenarios = 1):
             if start_printed:
                 success = "true" if (done and total_reward > 0) else "false"
                 rewards_str = ",".join(rewards_list)
-                print(f"[END] success={success} steps={len(rewards_list)} score={scenario_score:.2f} rewards={rewards_str}")
+                print(f"[END] success={success} steps={len(rewards_list)} rewards={rewards_str}")
 
         total_score += scenario_score
 
@@ -477,7 +510,7 @@ def grade_hard(num_scenarios=1):
             if start_printed:
                 success = "true" if (done and total_reward > 0) else "false"
                 rewards_str = ",".join(rewards_list)
-                print(f"[END] success={success} steps={len(rewards_list)} score={final_score:.2f} rewards={rewards_str}")
+                print(f"[END] success={success} steps={len(rewards_list)} rewards={rewards_str}")
 
         total_score += final_score
         

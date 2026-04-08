@@ -2,7 +2,7 @@ import json
 import os
 import random
 import re
-from models import Observation, Action
+from models import Observation, Action, Reward
 
 class DevOpsEnv:
 
@@ -188,7 +188,7 @@ class DevOpsEnv:
             step_count=self.step_count
         )
         
-        return self.observation, reward, done, {}
+        return self.observation, Reward(value=reward), done, {}
 
     def _step_medium(self, action: Action):
         action_str = action.action_type
@@ -261,7 +261,7 @@ class DevOpsEnv:
             system_metrics=state.get("metrics", {}),
             logs=self.state_data["logs"],
             step_count=self.step_count
-        ), reward, done, {}
+        ), Reward(value=reward), done, {}
 
     def _step_hard(self, action: Action):
         done = False
@@ -307,7 +307,7 @@ class DevOpsEnv:
                 if self.observation.logs is None:
                     self.observation.logs = ""
                 self.observation.logs += f"\nStep {self.step_count}: {action_str} -> Reward: {step_reward:.2f}"
-                return self.observation, step_reward, True, {"reason": "guardrail_violation"}
+                return self.observation, Reward(value=step_reward), True, {"reason": "guardrail_violation"}
 
         prev_state = json.loads(json.dumps(state))
 
@@ -347,7 +347,7 @@ class DevOpsEnv:
             if self.observation.logs is None:
                 self.observation.logs = ""
             self.observation.logs += f"\nStep {self.step_count}: {action_str} -> Reward: {step_reward:.2f}"
-            return self.observation, step_reward, True, {"reason": "sla_violation"}
+            return self.observation, Reward(value=step_reward), True, {"reason": "sla_violation"}
 
         if sla_status == "PASS":
             success_reward = 1.0
@@ -363,7 +363,7 @@ class DevOpsEnv:
             self.observation.logs = ""
 
         self.observation.logs += f"\nStep {self.step_count}: {action_str} -> Reward: {step_reward:.2f}"
-        return self.observation, step_reward, done, {}
+        return self.observation, Reward(value=step_reward), done, {}
         
     def _detect_sla_improvement(self, prev_state, new_state) -> bool:
         required_rules = self.state_data.get("sla_rules", {}).get("required", [])

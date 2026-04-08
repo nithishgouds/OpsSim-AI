@@ -38,9 +38,10 @@ def step_env(action: Action):
         obs, reward, done, info = env_instance.step(action)
         return {
             "observation": obs.dict(),
-            "reward": reward,
+            "reward": reward.value,
             "done": done,
-            "info": info
+            "info": info,
+            "last_action_error": env_instance.last_action_error
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
