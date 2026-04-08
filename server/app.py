@@ -23,10 +23,10 @@ def health():
     return {"status": "ok"}
 
 @app.post("/reset")
-def reset_env(req: ResetRequest):
+def reset_env(req: ResetRequest | None = None):
     try:
-        # REMOVED seed=42 to match env.py signature
-        obs = env_instance.reset(task=req.task) 
+        task = req.task if req is not None else "easy"
+        obs = env_instance.reset(task=task)
         return {"observation": obs.dict()}
     except Exception as e:
         print(f"INTERNAL ERROR: {str(e)}") 
