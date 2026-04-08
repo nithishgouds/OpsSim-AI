@@ -392,6 +392,8 @@ def grade_easy(num_scenarios=1):
         finally:
             env.close()
             scenario_score = max(0.0, min(1.0, (total_reward - min_reward) / (max_reward - min_reward)))
+            
+            scenario_score = 0.001 + (scenario_score * 0.998)
             if start_printed:
                 success = "true" if (done and total_reward > 0) else "false"
                 rewards_str = ",".join(rewards_list)
@@ -440,6 +442,7 @@ def grade_medium(num_scenarios = 1):
         finally:
             env.close()
             scenario_score = max(0.0, min(1.0, (total_reward - min_reward) / (max_reward - min_reward)))
+            scenario_score = 0.001 + (scenario_score * 0.998)
             if start_printed:
                 success = "true" if (done and total_reward > 0) else "false"
                 rewards_str = ",".join(rewards_list)
@@ -509,6 +512,7 @@ def grade_hard(num_scenarios=1):
             env.close()
             final_score = (total_reward - min_reward) / (max_reward - min_reward)
             final_score = max(0.0, min(1.0, final_score))
+            final_score = 0.001 + (final_score * 0.998)
             if start_printed:
                 success = "true" if (done and last_info.get("reason") not in {"guardrail_violation", "sla_violation"}) else "false"
                 rewards_str = ",".join(rewards_list)
