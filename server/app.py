@@ -5,8 +5,10 @@ import os
 from env import DevOpsEnv
 from models import Action
 
-app = FastAPI(title="OpsSim AI Environment API")
 env_instance = DevOpsEnv()
+
+# Custom FastAPI app with both OpenEnv standard routes and legacy routes
+app = FastAPI(title="OpsSim AI Environment API")
 
 # In app.py
 class ResetRequest(BaseModel):
@@ -27,7 +29,7 @@ def reset_env(req: ResetRequest | None = None):
     try:
         task = req.task if req is not None else "easy"
         obs = env_instance.reset(task=task)
-        return {"observation": obs.dict()}
+        return {"observation": obs.model_dump()}
     except Exception as e:
         print(f"INTERNAL ERROR: {str(e)}") 
         raise HTTPException(status_code=400, detail=str(e))
@@ -37,7 +39,7 @@ def step_env(action: Action):
     try:
         obs, reward, done, info = env_instance.step(action)
         return {
-            "observation": obs.dict(),
+            "observation": obs.model_dump(),
             "reward": reward.value,
             "done": done,
             "info": info,
@@ -48,7 +50,7 @@ def step_env(action: Action):
 
 @app.get("/state")
 def get_state():
-    return {"state": env_instance.state()}
+    return {"state": env_instance.get_state()}
 
 def main():
     port = int(os.getenv("PORT", "7860"))

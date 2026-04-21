@@ -22,7 +22,7 @@ build-backend = "setuptools.build_meta"
 server = "server.app:main"
 
 [tool.setuptools]
-py-modules = ["env", "models", "inference"]
+py-modules = ["env", "models", "inference", "multi_agent", "train", "evaluate"]
 
 [tool.setuptools.packages.find]
 include = ["server"]

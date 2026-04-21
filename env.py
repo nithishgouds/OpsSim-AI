@@ -2,35 +2,59 @@ import json
 import os
 import random
 import re
-from models import Observation, Action, Reward
+from openenv.core import Environment as OpenEnvEnvironment
+from models import Observation, Action, Reward, OpsSIMObservation, OpsSIMAction, OpsSIMState
 
-class DevOpsEnv:
+class DevOpsEnv(OpenEnvEnvironment[OpsSIMAction, OpsSIMObservation, OpsSIMState]):
 
     _DATA_CACHE = {}
+    _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
     def __init__(self, seed=42, max_steps=8):
+        super().__init__()
         self.rng = random.Random(seed)
         self.max_steps = max_steps
-        self.scenario_index = 0
+        self.scenario_index = {"easy": 0, "medium": 0, "hard": 0, "cascade": 0}
         self.state_data = {}
         self.observation = None
         self.last_action_error = None
+        self.step_count = 0
+        self.task_type = "easy"
 
         if "easy" not in DevOpsEnv._DATA_CACHE:
-            dataset_path = os.path.join("tasks", "easy.json")
+            dataset_path = os.path.join(DevOpsEnv._BASE_DIR, "tasks", "easy.json")
             if os.path.exists(dataset_path):
                 with open(dataset_path, "r") as f:
                     DevOpsEnv._DATA_CACHE["easy"] = json.load(f)["easy_tasks_dataset"]
+        if "medium" not in DevOpsEnv._DATA_CACHE:
+            dataset_path = os.path.join(DevOpsEnv._BASE_DIR, "tasks", "medium.json")
+            if os.path.exists(dataset_path):
+                with open(dataset_path, "r") as f:
+                    DevOpsEnv._DATA_CACHE["medium"] = json.load(f)["medium_tasks_dataset"]
+        if "hard" not in DevOpsEnv._DATA_CACHE:
+            dataset_path = os.path.join(DevOpsEnv._BASE_DIR, "tasks", "hard.json")
+            if os.path.exists(dataset_path):
+                with open(dataset_path, "r") as f:
+                    DevOpsEnv._DATA_CACHE["hard"] = json.load(f)["hard_tasks_dataset"]
+        if "cascade" not in DevOpsEnv._DATA_CACHE:
+            dataset_path = os.path.join(DevOpsEnv._BASE_DIR, "tasks", "cascade.json")
+            if os.path.exists(dataset_path):
+                with open(dataset_path, "r") as f:
+                    DevOpsEnv._DATA_CACHE["cascade"] = json.load(f)["cascade_tasks_dataset"]
 
-    def reset(self, task:str = "easy") -> Observation:
+    def reset(self, seed=None, episode_id=None, task:str = "easy", **kwargs) -> Observation:
         self.step_count = 0
         self.task_type = task
         self.last_action_error = None
+        if seed is not None:
+            self.rng = random.Random(seed)
 
         if self.task_type == "easy":
             return self._reset_easy()
         elif self.task_type == "medium":
             return self._reset_medium()
+        elif self.task_type == "cascade":
+            return self._reset_cascade()
         else:
             return self._reset_hard()
 
@@ -38,8 +62,8 @@ class DevOpsEnv:
         self.step_count = 0
         
         dataset = DevOpsEnv._DATA_CACHE.get("easy", [])
-        scenario = dataset[self.scenario_index % len(dataset)]
-        self.scenario_index += 1
+        scenario = dataset[self.scenario_index["easy"] % len(dataset)]
+        self.scenario_index["easy"] += 1
 
         self.state_data = {
             "config": scenario["initial_state"].copy(),
@@ -64,11 +88,10 @@ class DevOpsEnv:
     def _reset_medium(self):
         self.step_count = 0
 
-        with open(os.path.join("tasks", "medium.json"), "r") as f:
-            dataset = json.load(f)["medium_tasks_dataset"]
+        dataset = DevOpsEnv._DATA_CACHE.get("medium", [])
 
-        scenario = dataset[self.scenario_index % len(dataset)]
-        self.scenario_index += 1
+        scenario = dataset[self.scenario_index["medium"] % len(dataset)]
+        self.scenario_index["medium"] += 1
 
         self.state_data = {
             "state": scenario["initial_state"].copy(),
@@ -93,11 +116,10 @@ class DevOpsEnv:
         )
 
     def _reset_hard(self):
-        with open(os.path.join("tasks", "hard.json"), "r") as f:
-            dataset = json.load(f)["hard_tasks_dataset"]
+        dataset = DevOpsEnv._DATA_CACHE.get("hard", [])
 
-        scenario = dataset[self.scenario_index % len(dataset)]
-        self.scenario_index += 1
+        scenario = dataset[self.scenario_index["hard"] % len(dataset)]
+        self.scenario_index["hard"] += 1
 
         self.state_data = {
             "scenario_id": scenario.get("scenario_id", ""),
@@ -129,18 +151,60 @@ class DevOpsEnv:
         )
         return self.observation
 
-    def step(self, action: Action):
+    def _reset_cascade(self):
+        """Reset for cascade (long-horizon investigation) tasks. Uses hard-task
+        mechanics but with higher max_steps to allow the longer chains."""
+        self.max_steps = max(self.max_steps, 15)
+
+        dataset = DevOpsEnv._DATA_CACHE.get("cascade", [])
+        scenario = dataset[self.scenario_index["cascade"] % len(dataset)]
+        self.scenario_index["cascade"] += 1
+
+        self.state_data = {
+            "scenario_id": scenario.get("scenario_id", ""),
+            "state": json.loads(json.dumps(scenario.get("initial_state", {}))),
+            "penalties": scenario.get("penalties", {}).copy(),
+            "optimal_solution_path": scenario.get("optimal_solution_path", []),
+            "transition_rules": scenario.get("transition_rules", {}),
+            "bleed_rules": scenario.get("bleed_rules", []),
+            "sla_rules": scenario.get("sla_rules", {"required": [], "forbidden": []}),
+            "sla_violation_penalty": scenario.get("sla_violation_penalty", -1.0),
+            "history": []
+        }
+
+        available_actions = scenario.get("available_actions", [])
+        if not available_actions:
+            available_actions = list(self.state_data["optimal_solution_path"])
+            available_actions.extend(list(self.state_data["penalties"].keys()))
+            available_actions.append("do_nothing")
+        available_actions = sorted(list(set(available_actions)))
+
+        self.observation = Observation(
+            task_type="cascade",
+            available_actions=available_actions,
+            system_state=self.state_data["state"],
+            playbook_text=scenario.get("playbook_text", ""),
+            logs=scenario.get("description", ""),
+            step_count=self.step_count
+        )
+        return self.observation
+
+    def step(self, action: Action, timeout_s=None, **kwargs):
         self.step_count += 1
 
         if self.task_type == "easy":
             obs, reward, done, info = self._step_easy(action)
         elif self.task_type == "medium":
             obs, reward, done, info = self._step_medium(action)
+        elif self.task_type == "cascade":
+            obs, reward, done, info = self._step_hard(action)
         else:
             obs, reward, done, info = self._step_hard(action)
 
         if obs is not None:
             obs.step_count = self.step_count
+            obs.reward = reward.value
+            obs.done = done
             self.observation = obs
 
         return obs, reward, done, info
@@ -175,6 +239,9 @@ class DevOpsEnv:
         elif action_str == "do_nothing":
             reward -= 0.1
             self.state_data["logs"] = "[INFO] No action taken. The system remains broken."
+
+        else:
+            self.state_data["logs"] = f"[INFO] Action '{action_str}' had no effect. The system remains broken."
 
         if self.step_count >= self.max_steps:
             done = True
@@ -452,7 +519,9 @@ class DevOpsEnv:
         if not match:
             if condition_string.strip() == "1 == 1":
                 return True
-            return True
+            if condition_string.strip().lower() == "true":
+                return True
+            return False
             
         key, op, val_str = match.groups()
         
@@ -558,7 +627,16 @@ class DevOpsEnv:
         
         return "INCOMPLETE"
 
+    @property
     def state(self):
+        return OpsSIMState(
+            task_type=self.task_type,
+            state_data=self.state_data,
+            step_count=self.step_count,
+        )
+
+    def get_state(self):
+        """Non-property accessor for backward compatibility with server/app.py."""
         return {
             "task_type": self.task_type,
             "state": self.state_data,
