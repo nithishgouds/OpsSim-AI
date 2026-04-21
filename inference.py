@@ -33,7 +33,7 @@ class APIClient:
 
         if self.use_local_env:
             obs = self.local_env.reset(task=task)
-            self.state_data = self.local_env.state().get("state", {})
+            self.state_data = self.local_env.get_state().get("state", {})
             self.last_action_error = self.local_env.last_action_error
             return self._to_dotdict(obs.model_dump())
 
@@ -47,14 +47,14 @@ class APIClient:
         except requests.RequestException:
             self.use_local_env = True
             obs = self.local_env.reset(task=task)
-            self.state_data = self.local_env.state().get("state", {})
+            self.state_data = self.local_env.get_state().get("state", {})
             self.last_action_error = self.local_env.last_action_error
             return self._to_dotdict(obs.model_dump())
 
     def step(self, action):
         if self.use_local_env:
             obs, reward, done, info = self.local_env.step(action)
-            self.state_data = self.local_env.state().get("state", {})
+            self.state_data = self.local_env.get_state().get("state", {})
             self.last_action_error = self.local_env.last_action_error
             reward_value = reward.value if hasattr(reward, "value") else reward
             return self._to_dotdict(obs.model_dump()), reward_value, done, info
@@ -74,14 +74,14 @@ class APIClient:
         except requests.RequestException:
             self.use_local_env = True
             obs, reward, done, info = self.local_env.step(action)
-            self.state_data = self.local_env.state().get("state", {})
+            self.state_data = self.local_env.get_state().get("state", {})
             self.last_action_error = self.local_env.last_action_error
             reward_value = reward.value if hasattr(reward, "value") else reward
             return self._to_dotdict(obs.model_dump()), reward_value, done, info
 
     def _sync_state(self):
         if self.use_local_env:
-            self.state_data = self.local_env.state().get("state", {})
+            self.state_data = self.local_env.get_state().get("state", {})
             return
         try:
             resp = requests.get(f"{self.base_url}/state", timeout=10)
